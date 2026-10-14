@@ -1,0 +1,204 @@
+# Implementação de `#pragma omp transaction`
+
+## Resultado
+
+A extensão está implementada em C e C++ nesta árvore GCC 16.2.0. Aceita
+`#pragma omp transaction` seguido de um bloco estruturado, sem cláusulas.
+O corpo executa normalmente para cada thread que encontrar a região, usando
+o ambiente de dados da construção OpenMP externa. Regiões aninhadas são aceitas.
+
+Foram consultados `OPENMP_AGENT.md` e `OPENMP_CRITICAL_AGENT.md`, e o percurso
+foi conferido diretamente nos fontes. Esses dois documentos não foram alterados.
+
+## Representação e processamento
+
+```text
+PRAGMA_OMP_TRANSACTION
+  -> newtm_c_parser_transaction / newtm_cp_parser_transaction
+  -> newtm_finish_transaction
+OMP_TRANSACTION (um operando: corpo)
+  -> gimplify_expr: caso OMP_TRANSACTION
+  -> newtm_build_transaction
+GIMPLE_OMP_TRANSACTION (layout GSS_OMP)
+  -> verificações de bloco estruturado
+  -> varredura OpenMP
+  -> newtm_lower_transaction, no passe omplower
+sequência GIMPLE comum, preservando binds e cleanups do corpo
+  -> passes de controle, exceções, CFG, otimização e geração de código
+```
+
+O construtor GIMPLE está em `gcc/gimple.cc`, declarado em `gcc/gimple.h`.
+A conversão é chamada pelo dispatcher de `gcc/gimplify.cc`.
+O lowering específico está em `gcc/omp-low.cc`: transforma recursivamente o
+corpo e substitui a instrução por essa sequência com `gsi_replace_with_seq`.
+
+O código `GIMPLE_OMP_TRANSACTION` permanece explícito até esse lowering.
+Não é convertido em `GIMPLE_OMP_CRITICAL`, `GIMPLE_TRANSACTION` ou outro alias.
+Não sobrevive até `ompexp`, portanto não exige um caso novo em `omp-expand.cc`.
+
+O passe de varredura registra um contexto para permitir o lowering de regiões
+isoladas, mas percorre o corpo com o contexto externo. O lowering também usa
+esse contexto externo. Assim, a extensão não oculta regras de aninhamento nem
+o tratamento das variáveis da construção OpenMP envolvente.
+
+## Funções novas e componentes reutilizados
+
+As cinco funções específicas usam o prefixo exigido:
+
+| Função | Arquivo | Responsabilidade |
+| --- | --- | --- |
+| `newtm_c_parser_transaction` | `gcc/c/c-parser.cc` | Parser C; rejeita tokens adicionais na diretiva e analisa o corpo. |
+| `newtm_cp_parser_transaction` | `gcc/cp/parser.cc` | Parser C++; preserva a localização e analisa o corpo. |
+| `newtm_finish_transaction` | `gcc/c-family/c-omp.cc` | Finalizador compartilhado que constrói `OMP_TRANSACTION`. |
+| `newtm_build_transaction` | `gcc/gimple.cc` | Aloca `GIMPLE_OMP_TRANSACTION` e define seu corpo. |
+| `newtm_lower_transaction` | `gcc/omp-low.cc` | Substitui a região pelo corpo sequencial transformado. |
+
+Não foram criados tipos auxiliares, estruturas ou variáveis globais específicas.
+A representação reutiliza `gimple_statement_omp`, pelo layout `GSS_OMP`.
+Os identificadores novos foram pesquisados antes da implementação; não foram
+encontrados conflitos com `newtm_` ou `OMP_TRANSACTION` nos fontes examinados.
+
+Foram reutilizados o registro adiado de pragmas, os dispatchers OpenMP,
+os parsers de blocos estruturados, `build1_loc`, `add_stmt`, `gimple_alloc`,
+`gimple_omp_set_body`, os acessores genéricos de corpo, a cópia de sequências,
+os walkers OpenMP, a impressão de regiões com apenas corpo e as verificações
+existentes de blocos estruturados e aninhamento.
+
+## Arquivos alterados
+
+| Grupo | Arquivos |
+| --- | --- |
+| Registro e classificação | `gcc/c-family/c-pragma.h`, `gcc/c-family/c-pragma.cc`, `gcc/c-family/c-common.h`, `gcc/c-family/c-omp.cc` |
+| Parsing | `gcc/c/c-parser.cc`, `gcc/cp/parser.cc` |
+| GENERIC | `gcc/tree.def`, `gcc/tree.h`, `gcc/tree-pretty-print.cc` |
+| GIMPLE | `gcc/gimple.def`, `gcc/gimple.h`, `gcc/gimple.cc`, `gcc/gimple-walk.cc`, `gcc/gimple-pretty-print.cc` |
+| Conversão e lowering | `gcc/gimplify.cc`, `gcc/omp-low.cc`, `gcc/gimple-low.cc` |
+| Cópia e funções aninhadas | `gcc/tree-inline.cc`, `gcc/tree-nested.cc` |
+| Templates, módulos e classificação C++ | `gcc/cp/pt.cc`, `gcc/cp/module.cc`, `gcc/cp/constexpr.cc` |
+| Manual | `gcc/doc/extend.texi` |
+
+São 22 arquivos de implementação e um arquivo do manual. Foram adicionados
+dez testes e este relatório. Não foram alterados fontes ou testes da `libgomp`
+nem a infraestrutura de GNU Transactional Memory.
+
+`CASE_GIMPLE_OMP`, em `gimple.h`, inclui o código novo; seus consumidores
+genéricos, como o verificador de `tree-cfg.cc`, passam a reconhecê-lo sem
+alterações locais. `gimple-low.cc` verifica a invariável de que a região já
+deve ter sido eliminada em `omplower`. Os streamers de GIMPLE/LTO foram
+examinados; a região é removida antes da serialização normal. Módulos C++
+precisam reconhecer a árvore que pode permanecer em uma definição de template,
+por isso `cp/module.cc` recebeu sua classificação explícita como OpenMP.
+
+## Testes adicionados
+
+| Arquivo | Cobertura |
+| --- | --- |
+| `gcc/testsuite/c-c++-common/gomp/transaction-1.c` | Execução, região vazia, declarações, atribuições, condição, laço, aninhamento e dump legível antes/depois do lowering. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-2.c` | Dump bruto com `gimple_omp_transaction`; ausência de alias e de chamadas GOMP/ITM; assembly sem essas chamadas. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-3.c` | Execução em `parallel`, redução externa, regiões aninhadas e worksharing dentro da região. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-4.c` | Rejeição de cláusulas e nome, com recuperação para a construção seguinte. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-5.c` | Contexto de arquivo inválido e corpo ausente. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-6.c` | Rejeição de saltos que entram ou saem da região. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-7.c` | Preserva a proibição de regiões críticas aninhadas com o mesmo nome, mesmo com transaction intermediária. |
+| `gcc/testsuite/c-c++-common/gomp/transaction-8.c` | `_Pragma`, composição com critical e contagem das chamadas de sincronização explicitamente solicitadas. |
+| `gcc/testsuite/gcc.dg/gomp/transaction-1.c` | Função aninhada C com acesso a variável externa. |
+| `gcc/testsuite/g++.dg/gomp/transaction-1.C` | Template e execução de construtor/destrutor de objeto local. |
+
+## Compilação e resultados
+
+Foi utilizada a árvore existente `/usr/src/gcc-build`, no estágio 3,
+configurada para C, C++ e LTO. DejaGNU foi instalado para executar a suíte.
+O rebuild foi realizado com:
+
+```sh
+make -C /usr/src/gcc-build/gcc -j3 all
+```
+
+O comando terminou com sucesso e foi seguido de uma checagem incremental,
+também bem-sucedida, para incorporar as últimas edições feitas durante o rebuild.
+Houve um aviso de possível variável não inicializada em `gcc/expmed.cc`, arquivo
+não alterado. O build informa que os self-tests internos não estão habilitados.
+Não foi feita instalação do compilador reconstruído nem um novo bootstrap
+completo de três estágios.
+
+Comandos principais dos testes executados:
+
+```sh
+make -C /usr/src/gcc-build/gcc check-gcc TESTSUITEDIR=testsuite-newtm RUNTESTFLAGS='gomp.exp=transaction-*'
+make -C /usr/src/gcc-build/gcc check-g++ TESTSUITEDIR=testsuite-newtm RUNTESTFLAGS='gomp.exp=transaction-*'
+make -C /usr/src/gcc-build/gcc check-gcc TESTSUITEDIR=testsuite-newtm-critical RUNTESTFLAGS='gomp.exp=critical-*'
+make -C /usr/src/gcc-build/gcc check-g++ TESTSUITEDIR=testsuite-newtm-critical RUNTESTFLAGS='gomp.exp=critical-*'
+make -C /usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp check RUNTESTFLAGS='c.exp=critical-*.c c++.exp=critical-*.c'
+```
+
+| Conjunto | Resultado |
+| --- | --- |
+| Novos testes, C | 33 PASS |
+| Novos testes, C++ | 117 PASS, com variações de padrão de linguagem executadas pelo driver |
+| Regressão critical, C | 20 PASS; mesmos resultados da referência anterior ao rebuild |
+| Regressão critical, C++ | 60 PASS; mesmos resultados da referência anterior ao rebuild |
+| Regressão critical, libgomp | 28 PASS; mesmos resultados da referência anterior ao rebuild |
+| Execuções adicionais | 12 PASS: C/C++, O0/O2/O2+LTO, uma/quatro threads |
+| Módulo C++ | 1 PASS: exportação/importação e instanciação de template contendo transaction |
+
+Os resumos desses subconjuntos não contêm FAIL, UNRESOLVED ou UNSUPPORTED.
+Os testes de execução foram efetivamente executados, conforme registrado nos
+arquivos `.sum` e `.log`. A suíte completa do GCC/OpenMP não foi executada.
+
+Resultados e evidências locais:
+
+- `/tmp/newtm-build.log` e `/tmp/newtm-build-final.log`: rebuild e checagem incremental.
+- `/usr/src/gcc-build/gcc/testsuite-newtm/gcc/gcc.sum` e `gcc.log`.
+- `/usr/src/gcc-build/gcc/testsuite-newtm/g++/g++.sum` e `g++.log`.
+- `/usr/src/gcc-build/gcc/testsuite-newtm-critical/`: resumos/logs de critical.
+- `/usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp/testsuite/libgomp.sum` e `libgomp.log`.
+- `/tmp/newtm-critical-baseline-c.sum`, `/tmp/newtm-critical-baseline-cxx.sum`
+  e `/tmp/newtm-critical-runtime-baseline.sum`: referência anterior ao rebuild.
+- `/tmp/newtm-integration-checks/results.json`: verificações adicionais.
+- `/tmp/newtm-implementation.patch`: patch de revisão dos fontes/manual/testes.
+
+A inspeção direta produziu, antes do lowering:
+
+```text
+gimple_omp_transaction <
+  BODY <
+    gimple_assign <mem_ref, _1, *value, NULL, NULL>
+    gimple_assign <plus_expr, _2, _1, 1, NULL>
+    gimple_assign <ssa_name, *value, _2, NULL, NULL>
+  > >
+```
+
+Depois de `omplower`, permaneceu somente:
+
+```text
+_1 = *value;
+_2 = _1 + 1;
+*value = _2;
+```
+
+Os dumps e assembly dessa inspeção estão em
+`/tmp/newtm-representation.c.007t.gimple`,
+`/tmp/newtm-representation.c.010t.omplower` e
+`/tmp/newtm-representation.s`. Nenhum deles contém chamadas GOMP/ITM.
+
+## Limitações e extensão futura
+
+A diretiva é experimental e não pertence ao padrão OpenMP. Não oferece
+atomicidade, isolamento, rollback, sincronização ou operações de memória
+transacional. Não aceita cláusulas nem nome. É registrada por `-fopenmp`,
+não por `-fopenmp-simd` isoladamente. A entrada foi implementada apenas em C e
+C++; não foi adicionada sintaxe Fortran. Permanecem as restrições da
+infraestrutura OpenMP, incluindo blocos estruturados, contextos de aninhamento
+e rejeição em funções constexpr C++.
+
+A validação foi feita em x86_64 GNU/Linux. Nenhum dispositivo de offload foi
+validado, e não há promessa de identidade transacional entre host/dispositivo.
+Com `-fopenmp`, o driver continua usando as regras usuais de ligação OpenMP;
+a região transaction em si não adiciona chamadas ao runtime.
+
+Para uma semântica transacional futura, os pontos explícitos de extensão são
+`OMP_TRANSACTION`, `GIMPLE_OMP_TRANSACTION`, seu construtor e
+`newtm_lower_transaction`. Campos, cláusulas, validações e mecanismos de
+execução futuros devem ser acrescentados somente após definir essa semântica.
+O código atual não escolhe locks, GNU TM ou qualquer runtime transacional como
+implementação futura implícita.

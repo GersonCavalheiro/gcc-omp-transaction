@@ -1,0 +1,22 @@
+# Arquivos de compilação
+*.o
+*.a
+*.so
+*.so.*
+*.lo
+*.la
+*.pyc
+
+# Arquivos temporários
+*~
+*.swp
+*.swo
+*.log
+
+# Arquivos do editor
+.vscode/
+.idea/
+
+# Diretórios de compilação, se criados dentro dos fontes
+gcc-build/
+build/
