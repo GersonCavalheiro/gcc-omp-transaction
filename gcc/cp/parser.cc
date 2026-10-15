@@ -48289,16 +48289,34 @@ cp_parser_omp_barrier (cp_parser *parser, cp_token *pragma_tok)
 #define OMP_CRITICAL_CLAUSE_MASK		\
 	( (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_HINT) )
 
-/* Parse the clause-free OpenMP transaction extension.  */
+/* Parse transaction [(identifier [, identifier] ...)].  The optional names
+   currently have no semantic effect.  */
 
 static tree
 newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
 			     bool *if_p)
 {
   location_t loc = pragma_tok->location;
+  if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_PAREN))
+    {
+      matching_parens parens;
+      parens.consume_open (parser);
+      do
+	{
+	  if (cp_parser_identifier (parser) == error_mark_node)
+	    goto end_pragma;
+	  if (!cp_lexer_next_token_is (parser->lexer, CPP_COMMA))
+	    break;
+	  cp_lexer_consume_token (parser->lexer);
+	}
+      while (true);
+      if (!parens.require_close (parser))
+	goto end_pragma;
+    }
   if (!cp_lexer_next_token_is (parser->lexer, CPP_PRAGMA_EOL))
     error_at (cp_lexer_peek_token (parser->lexer)->location,
 	      "%<#pragma omp transaction%> does not accept clauses");
+ end_pragma:
   cp_parser_skip_to_pragma_eol (parser, pragma_tok);
   tree body = cp_parser_omp_structured_block (parser, if_p);
   return newtm_finish_transaction (loc, body);

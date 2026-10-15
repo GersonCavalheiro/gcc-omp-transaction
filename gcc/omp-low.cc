@@ -15013,7 +15013,14 @@ newtm_lower_transaction (gimple_stmt_iterator *gsi_p)
   gimple *stmt = gsi_stmt (*gsi_p);
   omp_context *ctx = maybe_lookup_ctx (stmt);
   gcc_assert (ctx);
+
+  printf ("[newtm] Inicio do tratamento das variaveis da transacao\n");
+  /* TODO: Analyze and instrument the variables affected by this transaction
+     here, while its GIMPLE body is still available.  For now, only perform
+     the ordinary lowering of the body in the enclosing OpenMP context.  */
   lower_omp (gimple_omp_body_ptr (stmt), ctx->outer);
+  printf ("[newtm] Fim do tratamento das variaveis da transacao\n");
+
   gsi_replace_with_seq (gsi_p, gimple_omp_body (stmt), true);
 }
 

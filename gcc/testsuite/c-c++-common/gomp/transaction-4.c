@@ -8,7 +8,7 @@ newtm_test_clauses (void)
   { x++; }
   #pragma omp transaction hint (0) /* { dg-error "does not accept clauses" } */
   { x++; }
-  #pragma omp transaction (named) /* { dg-error "does not accept clauses" } */
+  #pragma omp transaction (named)
   { x++; }
   #pragma omp transaction
   { x++; }

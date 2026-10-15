@@ -3,7 +3,11 @@
 ## Resultado
 
 A extensão está implementada em C e C++ nesta árvore GCC 16.2.0. Aceita
-`#pragma omp transaction` seguido de um bloco estruturado, sem cláusulas.
+`#pragma omp transaction` seguido de um bloco estruturado, sem cláusulas. A sintaxe também aceita uma
+lista opcional não vazia de identificadores separados por vírgula entre
+parênteses: `#pragma omp transaction(a, b, c)`. Os nomes não são resolvidos
+como variáveis, não são armazenados na representação intermediária e ainda
+não têm efeito semântico.
 O corpo executa normalmente para cada thread que encontrar a região, usando
 o ambiente de dados da construção OpenMP externa. Regiões aninhadas são aceitas.
 
@@ -185,7 +189,7 @@ Os dumps e assembly dessa inspeção estão em
 
 A diretiva é experimental e não pertence ao padrão OpenMP. Não oferece
 atomicidade, isolamento, rollback, sincronização ou operações de memória
-transacional. Não aceita cláusulas nem nome. É registrada por `-fopenmp`,
+transacional. Não aceita cláusulas; aceita a lista opcional de identificadores descrita acima. É registrada por `-fopenmp`,
 não por `-fopenmp-simd` isoladamente. A entrada foi implementada apenas em C e
 C++; não foi adicionada sintaxe Fortran. Permanecem as restrições da
 infraestrutura OpenMP, incluindo blocos estruturados, contextos de aninhamento
@@ -202,3 +206,31 @@ Para uma semântica transacional futura, os pontos explícitos de extensão são
 execução futuros devem ser acrescentados somente após definir essa semântica.
 O código atual não escolhe locks, GNU TM ou qualquer runtime transacional como
 implementação futura implícita.
+
+## Extensão sintática: lista de identificadores
+
+Os parsers C e C++ aceitam a forma sem argumentos e a forma
+`transaction (identificador [, identificador] ...)`. Listas vazias,
+expressões, separadores ausentes e vírgulas finais são rejeitados, com
+recuperação até o fim do pragma e análise normal do corpo seguinte.
+Os identificadores podem ser repetidos e não precisam estar declarados.
+Esta alteração é apenas sintática: os operandos de GENERIC/GIMPLE e o
+lowering permanecem os mesmos.
+
+O teste `transaction-4.c` agora aceita `(named)`. Foram acrescentados
+`transaction-9.c` (execução, lista simples/múltipla, macros, `_Pragma`,
+aninhamento e compatibilidade com a forma original) e `transaction-10.c`
+(diagnósticos e recuperação de erros), ambos compartilhados por C e C++.
+
+Validação desta extensão: rebuild com `make -C /usr/src/gcc-build/gcc -j3 all`
+concluído com sucesso. Executados `check-gcc` e `check-g++`, com
+`TESTSUITEDIR=testsuite-newtm-identifiers` e `RUNTESTFLAGS='gomp.exp=transaction-*'`.
+Resultados: C, 38 PASS e 5 FAIL; C++, 132 PASS e 15 FAIL. Todas as verificações
+dos testes novos e do `transaction-4.c` atualizado passaram, incluindo execução
+em C e C++ (gnu++98, gnu++20 e gnu++26). As falhas restantes são exclusivamente
+saída inesperada das mensagens `[newtm] Inicio/Fim do tratamento das variaveis
+da transacao`, provenientes de alterações já existentes em `gcc/omp-low.cc`,
+preservadas nesta tarefa. O teste novo de execução filtra essas mensagens.
+Não houve ERROR, UNRESOLVED ou UNSUPPORTED nos resumos finais.
+Logs de build/testes: `/tmp/newtm-identifiers-build.log`,
+`/tmp/newtm-identifiers-test-c.log` e `/tmp/newtm-identifiers-test-cxx.log`.
