@@ -48303,8 +48303,27 @@ newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
       parens.consume_open (parser);
       do
 	{
-	  if (cp_parser_identifier (parser) == error_mark_node)
+	  tree name = cp_parser_identifier (parser);
+	  if (name == error_mark_node)
 	    goto end_pragma;
+	  /* Query the active bindings without diagnosing missing names or
+	     creating an evaluated use/capture just for debugging output.  */
+	  tree decl = lookup_name (name);
+	  tree type = (decl && decl != error_mark_node && DECL_P (decl)
+		       ? TREE_TYPE (decl) : NULL_TREE);
+	  fprintf (stderr, "[newtm] transaction: %s: ",
+		   IDENTIFIER_POINTER (name));
+	  if (decl && TREE_CODE (decl) == NAMESPACE_DECL)
+	    fputs ("<no type>", stderr);
+	  else if (type && type != error_mark_node)
+	    fputs (type_as_string (type, TFF_PLAIN_IDENTIFIER), stderr);
+	  else if (decl && decl != error_mark_node)
+	    /* A visible overload set or namespace has no single object type.  */
+	    fputs (TREE_CODE (decl) == OVERLOAD ? "<overload>" : "<no type>",
+		   stderr);
+	  else
+	    fputs ("undef", stderr);
+	  fputc ('\n', stderr);
 	  if (!cp_lexer_next_token_is (parser->lexer, CPP_COMMA))
 	    break;
 	  cp_lexer_consume_token (parser->lexer);

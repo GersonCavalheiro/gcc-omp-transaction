@@ -24557,6 +24557,22 @@ newtm_c_parser_transaction (location_t loc, c_parser *parser, bool *if_p)
       c_parser_consume_token (parser);
       do
 	{
+	  /* Resolve before consuming the name or entering the associated block.
+	     This is debugging output, so missing names are not errors.  */
+	  if (c_parser_next_token_is (parser, CPP_NAME))
+	    {
+	      tree name = c_parser_peek_token (parser)->value;
+	      tree decl = lookup_name (name);
+	      tree type = (decl && decl != error_mark_node && DECL_P (decl)
+			   ? TREE_TYPE (decl) : NULL_TREE);
+	      fprintf (stderr, "[newtm] transaction: %s: ",
+		       IDENTIFIER_POINTER (name));
+	      if (type && type != error_mark_node)
+		print_generic_expr (stderr, type);
+	      else
+		fputs ("undef", stderr);
+	      fputc ('\n', stderr);
+	    }
 	  if (!c_parser_require (parser, CPP_NAME, "expected identifier"))
 	    goto end_pragma;
 	  if (c_parser_next_token_is_not (parser, CPP_COMMA))

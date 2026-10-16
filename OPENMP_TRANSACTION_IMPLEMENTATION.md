@@ -1,5 +1,48 @@
 # Implementação de `#pragma omp transaction`
 
+## Depuração de identificadores e tipos
+
+Os parsers C e C++ agora consultam `lookup_name` durante a análise de cada
+identificador, antes de entrar no corpo, e escrevem em `stderr`:
+
+```text
+[newtm] transaction: contador: int
+[newtm] transaction: valor: double
+[newtm] transaction: ausente: undef
+```
+
+A saída é incondicional para cada argumento, inclusive repetições. Não é
+emitida uma linha para a forma sem argumentos. A ausência de declaração
+visível imprime `undef`, sem emitir erro de nome não declarado. A consulta é
+apenas para depuração: não cria uso avaliado, captura ou armazenamento na IR.
+Os tipos são obtidos de `TREE_TYPE` de declarações válidas; C usa
+`print_generic_expr` e C++ usa `type_as_string`, preservando referências e
+tipos dependentes. Typedefs podem aparecer com seu nome de alias.
+
+Em C++, a consulta usa os bindings ativos diretamente, evitando os diagnósticos
+e efeitos do wrapper do parser para esta instrumentação. Ela não constitui uma
+validação completa de acessibilidade. Sobrecargas sem tipo único aparecem como
+`<overload>`; entidades encontradas sem tipo utilizável aparecem como
+`<no type>`. Um namespace não tem tipo de objeto, mesmo que o nó interno
+contenha `void_type_node`. Tipos dependentes são mostrados na definição do
+template, por exemplo `T&`; não há nova mensagem na instanciação.
+
+Validação: rebuild incremental em `/usr/src/gcc-build/gcc`; verificações
+diretas de C/C++ confirmaram parâmetros, qualificadores, ponteiros, arrays,
+structs, aliases, ocultação, repetições, nomes ausentes, escopos encerrados,
+declarações posteriores e locais exclusivos do corpo. Também foram verificados
+referências, membros e templates C++, além da recuperação após lista vazia.
+
+Execução de `gomp.exp=transaction-*`, com
+`TESTSUITEDIR=testsuite-newtm-scope-debug`: C, 36 PASS/7 FAIL; C++,
+126 PASS/21 FAIL. As falhas são verificações de saída adicional: incluem as
+mensagens preexistentes de `omp-low.cc` e a saída de depuração solicitada nos
+testes `transaction-4.c` e `transaction-10.c`. Os testes de execução passaram.
+Não foram modificadas as expectativas da suíte para ocultar essas mensagens.
+Evidências: `/tmp/newtm-scope-debug/`,
+`/tmp/newtm-scope-debug-build.log` e os `.sum`/`.log` no diretório de testes
+acima. A suíte completa não foi executada.
+
 ## Resultado
 
 A extensão está implementada em C e C++ nesta árvore GCC 16.2.0. Aceita
