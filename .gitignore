@@ -17,6 +17,9 @@
 .vscode/
 .idea/
 
+# Execut�veis
+a.out
+
 # Diretórios de compilação, se criados dentro dos fontes
 gcc-build/
 build/
