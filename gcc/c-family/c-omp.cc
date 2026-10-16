@@ -151,9 +151,9 @@ c_finish_omp_critical (location_t loc, tree body, tree name, tree clauses)
    of BODY, without synchronization or transactional memory operations.  */
 
 tree
-newtm_finish_transaction (location_t loc, tree body)
+newtm_finish_transaction (location_t loc, tree body, tree objects)
 {
-  tree stmt = build1_loc (loc, OMP_TRANSACTION, void_type_node, body);
+  tree stmt = build2_loc (loc, OMP_TRANSACTION, void_type_node, body, objects);
   return add_stmt (stmt);
 }
 

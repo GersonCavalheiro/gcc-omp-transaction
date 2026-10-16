@@ -48289,13 +48289,13 @@ cp_parser_omp_barrier (cp_parser *parser, cp_token *pragma_tok)
 #define OMP_CRITICAL_CLAUSE_MASK		\
 	( (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_HINT) )
 
-/* Parse transaction [(identifier [, identifier] ...)].  The optional names
-   currently have no semantic effect.  */
+/* Parse transaction [(identifier [, identifier] ...)] and retain its objects.  */
 
 static tree
 newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
 			     bool *if_p)
 {
+  tree objects = NULL_TREE;
   location_t loc = pragma_tok->location;
   if (cp_lexer_next_token_is (parser->lexer, CPP_OPEN_PAREN))
     {
@@ -48306,9 +48306,19 @@ newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
 	  tree name = cp_parser_identifier (parser);
 	  if (name == error_mark_node)
 	    goto end_pragma;
-	  /* Query the active bindings without diagnosing missing names or
-	     creating an evaluated use/capture just for debugging output.  */
+	  /* Preserve the declaration from the bindings at the directive.  */
 	  tree decl = lookup_name (name);
+	  if (decl && decl != error_mark_node
+	      && (TREE_CODE (decl) == VAR_DECL
+		  || TREE_CODE (decl) == PARM_DECL))
+	    {
+	      if (outer_automatic_var_p (decl))
+		decl = process_outer_var_ref (decl, tf_warning_or_error);
+	      if (decl != error_mark_node)
+		objects = tree_cons (NULL_TREE, decl, objects);
+	    }
+	  else
+	    error_at (loc, "transaction argument %qE is not a variable", name);
 	  tree type = (decl && decl != error_mark_node && DECL_P (decl)
 		       ? TREE_TYPE (decl) : NULL_TREE);
 	  fprintf (stderr, "[newtm] transaction: %s: ",
@@ -48338,7 +48348,7 @@ newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
  end_pragma:
   cp_parser_skip_to_pragma_eol (parser, pragma_tok);
   tree body = cp_parser_omp_structured_block (parser, if_p);
-  return newtm_finish_transaction (loc, body);
+  return newtm_finish_transaction (loc, body, nreverse (objects));
 }
 
 static tree

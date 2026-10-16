@@ -677,3 +677,10 @@ GOMP_PLUGIN_1.4 {
   global:
 	GOMP_PLUGIN_target_rev;
 } GOMP_PLUGIN_1.3;
+
+GOMP_NEWTM_1.0 {
+  global:
+    GOMP_transaction_begin;
+    GOMP_transaction_register;
+    GOMP_transaction_end;
+};

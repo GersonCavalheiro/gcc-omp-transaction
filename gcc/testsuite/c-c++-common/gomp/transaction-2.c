@@ -13,5 +13,9 @@ newtm_test_representation (int *value)
 /* The raw name comes from the independent GIMPLE_OMP_TRANSACTION code.  */
 /* { dg-final { scan-tree-dump "gimple_omp_transaction" "gimple" } } */
 /* { dg-final { scan-tree-dump-not "gimple_omp_critical|gimple_transaction" "gimple" } } */
-/* { dg-final { scan-tree-dump-not "GOMP_|_ITM_" "omplower" } } */
-/* { dg-final { scan-assembler-not "GOMP_|_ITM_" } } */
+/* { dg-final { scan-tree-dump-not "GOMP_critical|_ITM_" "omplower" } } */
+/* { dg-final { scan-assembler-not "GOMP_critical|_ITM_" } } */
+
+/* Tracing introduces calls without aliasing critical or GNU TM.  */
+/* { dg-final { scan-tree-dump "GOMP_transaction_begin" "omplower" } } */
+/* { dg-final { scan-tree-dump "GOMP_transaction_end" "omplower" } } */

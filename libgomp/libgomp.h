@@ -866,6 +866,9 @@ struct gomp_team
 
 struct gomp_thread
 {
+  /* Synchronous experimental transaction tracing context.  */
+  void *newtm_transaction_context;
+
   /* This is the function that the thread should run upon launch.  */
   void (*fn) (void *data);
   void *data;

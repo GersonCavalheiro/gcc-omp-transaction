@@ -11081,7 +11081,14 @@ This compiler also provides the experimental C and C++ extension
 
 The directive accepts an optional nonempty, comma-separated list of identifiers
 in parentheses, for example @code{#pragma omp transaction(a, b, c)}.  These
-identifiers are not resolved as variables and currently have no semantic effect.
+identifiers must designate variables or parameters of complete, constant-size
+type.  C++ references designate their referred-to objects.  The compiler
+generates runtime calls that print hash registration and release messages to
+standard output.  Repeated objects in nested regions are registered once and
+released at the outermost exit.  This is execution tracing only: the hash
+services remain unimplemented and their handles are null.
+Task suspension, migration, and device execution are not supported by this
+experimental tracing bridge.
 Empty lists and expressions are not accepted.  The directive accepts no clauses.
 In this initial implementation its body
 executes as ordinary sequential code for each encountering thread, with the

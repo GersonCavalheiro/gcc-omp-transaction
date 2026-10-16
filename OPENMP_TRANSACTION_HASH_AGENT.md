@@ -1,3 +1,15 @@
+## Atualização: chamadas de instrumentação
+
+A diretiva agora gera chamadas à ponte provisória `GOMP_transaction_*`.
+Essa ponte chama create/acquire/release/destroy nos pontos de vida útil
+correspondentes. As primitivas hash continuam sem funcionalidade: imprimem
+argumentos, devolvem INVALID/handles nulos ou null/zero e não encerram mais o
+processo. A ponte ignora os estados de falha somente para permitir a sequência
+de mensagens nesta etapa. Consulte a seção inicial de
+`OPENMP_TRANSACTION_IMPLEMENTATION.md` para o percurso e as limitações atuais.
+O restante deste documento preserva a especificação da implementação futura;
+os parágrafos históricos sobre `gomp_fatal` não descrevem mais os corpos atuais.
+
 # Agente orientador: biblioteca hash de transaction
 
 ## Missão e referências

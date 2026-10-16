@@ -15005,7 +15005,8 @@ lower_omp_regimplify_operands (omp_context *ctx, gimple *stmt,
 
 /* Lower the provisional transaction region to its sequential body.  Keep
    enclosing OpenMP data and nesting contexts transparent to this extension.
-   In particular, do not add critical locks, GNU TM, or runtime calls.  */
+   Tracing calls have already been emitted during gimplification; do not
+   add critical locks or GNU TM.  */
 
 static void
 newtm_lower_transaction (gimple_stmt_iterator *gsi_p)

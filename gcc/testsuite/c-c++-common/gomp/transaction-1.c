@@ -26,4 +26,4 @@ main (void)
 
 /* { dg-final { scan-tree-dump-times "#pragma omp transaction" 3 "gimple" } } */
 /* { dg-final { scan-tree-dump-not "omp transaction" "omplower" } } */
-/* { dg-final { scan-tree-dump-not "GOMP_|_ITM_|omp critical" "omplower" } } */
+/* { dg-final { scan-tree-dump-not "GOMP_critical|_ITM_|omp critical" "omplower" } } */

@@ -1,3 +1,68 @@
+## Instrumentação de chamadas à hash (etapa atual)
+
+Os parsers preservam as declarações dos objetos no segundo operando de
+`OMP_TRANSACTION`; nomes que não designam variáveis/parâmetros são rejeitados.
+A instanciação C++ substitui essa lista. Na gimplificação, a lista é convertida
+em chamadas `GOMP_transaction_begin`, `GOMP_transaction_register(address, size)`
+e `GOMP_transaction_end`; a saída usa `GIMPLE_TRY_FINALLY`. Referências C++
+registram o objeto referido. Exigem-se tipos completos de tamanho constante.
+As chamadas comuns passam pelo remapeamento de dados OpenMP existente, e a
+lista não precisa sobreviver no marcador GIMPLE.
+
+A ponte provisória na libgomp chama `newtm_hash_create` uma vez, no primeiro
+uso, `newtm_hash_acquire` para cada objeto distinto no contexto, e
+`newtm_hash_release` somente ao sair do nível externo. Aninhamento por chamada
+de função também compartilha esse contexto. No encerramento normal da
+biblioteca, chama `newtm_hash_destroy` se houve uso. As outras primitivas não
+são chamadas artificialmente: ainda não há operações de acesso transacional,
+metadados ou diagnóstico de contagem que as exijam.
+
+As primitivas apenas imprimem seus argumentos. Os antigos `gomp_fatal` foram
+substituídos por saídas definidas: estados INVALID, handles nulos e consultas
+nulas/zero. A ponte ignora esses estados **apenas nesta etapa de instrumentação**;
+não há tabela ou entradas reais, e os logs mostram handles nulos. Uma lista
+mínima por execução controla as mensagens de aquisição/liberação e duplicatas;
+não armazena valores dos objetos nem implementa hash, reservas ou conflitos.
+O log consiste exclusivamente nos `printf` existentes, sem outro mecanismo.
+
+O contexto acompanha execução síncrona na thread. Tasks com suspensão/migração
+e dispositivos não estão suportados. O corpo continua acessando memória comum;
+a saída excepcional apenas limpa o contexto, sem commit, abort ou rollback.
+Os relatos abaixo são históricos e não descrevem integralmente esta etapa.
+
+Validação desta etapa:
+
+- Build GCC concluído com `make -C /usr/src/gcc-build/gcc -j6 all`, seguido
+  de checagem incremental; libgomp reconstruída com `make -j3 all`.
+- Novos testes `transaction-log-*`: C, 8 PASS; C++, 33 PASS; libgomp,
+  6 PASS (compilação, execução e padrão de saída em C e C++).
+- Regressão `critical-*`: C, 20 PASS; C++, 60 PASS.
+- Conjunto `transaction-*`: C, 46 PASS/7 FAIL; C++, 165 PASS/21 FAIL.
+  Sem UNRESOLVED nos resultados finais. Todas as linhas excedentes que
+  causaram FAIL são mensagens `[newtm]` de depuração já presentes nos parsers
+  e em omplower; não foram filtradas dos testes históricos para esconder falhas.
+- Nove execuções adicionais passaram: três programas C/C++ em O0, O2 e
+  O2+LTO, cobrindo quatro threads, duplicatas, aninhamento léxico/por função,
+  tipos e tamanhos, referências, lambdas e cleanup durante exceção. Um teste
+  adicional confirmou endereços das cópias private/reduction; outro confirmou
+  exportação/importação e instanciação de template em módulo C++.
+- Testes diretos da ponte confirmaram liberação somente na saída externa e
+  80 pares acquire/release sob quatro threads, com uma criação/destruição global.
+
+Os testes de execução precisam da libgomp reconstruída. Na regressão GCC,
+foi necessário definir GCC_UNDER_TEST/GXX_UNDER_TEST com `-L` e rpath para
+`/usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp/.libs`: o driver padrão estava
+ligando a versão antiga e falhava com símbolos GOMP_transaction_* ausentes.
+Não foi feita instalação do compilador ou runtime, nem executada a suíte completa.
+
+Evidências: `/tmp/newtm-calls-build-final.log`,
+`/tmp/newtm-calls-build-check.log`, `/tmp/newtm-calls-lambda-build.log`,
+`/tmp/newtm-calls-runtime-final.log`, `/tmp/newtm-calls-verify.py`,
+`/tmp/newtm-calls-regression.py`, `/tmp/newtm-calls-module/` e os resumos/logs
+nos diretórios `testsuite-newtm-calls`, `testsuite-newtm-calls-all`
+(critical) e `testsuite-newtm-calls-transaction` sob o build GCC. Os resultados
+da libgomp estão em seu diretório `testsuite/libgomp.sum` e `.log`.
+
 # Implementação de `#pragma omp transaction`
 
 ## Depuração de identificadores e tipos

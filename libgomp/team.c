@@ -81,6 +81,7 @@ gomp_thread_start (void *xdata)
   struct gomp_thread local_thr;
   thr = &local_thr;
 #endif
+  thr->newtm_transaction_context = NULL;
   gomp_sem_init (&thr->release, 0);
 
   /* Extract what we need from data.  */

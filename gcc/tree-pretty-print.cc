@@ -4181,6 +4181,18 @@ dump_generic_node (pretty_printer *pp, tree node, int spc, dump_flags_t flags,
 
     case OMP_TRANSACTION:
       pp_string (pp, "#pragma omp transaction");
+      if (OMP_TRANSACTION_OBJECTS (node))
+	{
+	  pp_left_paren (pp);
+	  for (tree item = OMP_TRANSACTION_OBJECTS (node); item;
+	       item = TREE_CHAIN (item))
+	    {
+	      dump_generic_node (pp, TREE_VALUE (item), spc, flags, false);
+	      if (TREE_CHAIN (item))
+		pp_string (pp, ", ");
+	    }
+	  pp_right_paren (pp);
+	}
       goto dump_omp_body;
 
     case OMP_STRUCTURED_BLOCK:

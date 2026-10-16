@@ -21066,7 +21066,49 @@ gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p,
 	    bool saved_in_omp_construct = in_omp_construct;
 
 	    in_omp_construct = true;
-	    gimplify_and_add (OMP_BODY (*expr_p), &body);
+	    if (TREE_CODE (*expr_p) == OMP_TRANSACTION)
+	      {
+		location_t loc = EXPR_LOCATION (*expr_p);
+		tree start = build_call_expr_loc (loc,
+		  builtin_decl_explicit (BUILT_IN_GOMP_TRANSACTION_BEGIN), 0);
+		gimplify_and_add (start, &body);
+		gimple_seq active = NULL;
+		for (tree item = OMP_TRANSACTION_OBJECTS (*expr_p); item;
+		     item = TREE_CHAIN (item))
+		  {
+		    tree object = TREE_VALUE (item);
+		    tree type = TREE_TYPE (object);
+		    if (TREE_CODE (type) == REFERENCE_TYPE)
+		      {
+			type = TREE_TYPE (type);
+			object = build_simple_mem_ref (object);
+		      }
+		    if (!COMPLETE_TYPE_P (type) || !TYPE_SIZE_UNIT (type)
+			|| TREE_CODE (TYPE_SIZE_UNIT (type)) != INTEGER_CST)
+		      {
+			error_at (loc, "transaction object must have a complete "
+			  "type of constant size");
+			continue;
+		      }
+		    mark_addressable (object);
+		    tree address = fold_convert (ptr_type_node,
+		      build_fold_addr_expr_loc (loc, object));
+		    tree call = build_call_expr_loc (loc,
+		      builtin_decl_explicit (BUILT_IN_GOMP_TRANSACTION_REGISTER),
+		      2, address, fold_convert (size_type_node,
+					      TYPE_SIZE_UNIT (type)));
+		    gimplify_and_add (call, &active);
+		  }
+		gimplify_and_add (OMP_BODY (*expr_p), &active);
+		gimple_seq cleanup = NULL;
+		tree end = build_call_expr_loc (loc,
+		  builtin_decl_explicit (BUILT_IN_GOMP_TRANSACTION_END), 0);
+		gimplify_and_add (end, &cleanup);
+		gimple_seq_add_stmt (&body,
+		  gimple_build_try (active, cleanup, GIMPLE_TRY_FINALLY));
+	      }
+	    else
+	      gimplify_and_add (OMP_BODY (*expr_p), &body);
 	    in_omp_construct = saved_in_omp_construct;
 	    switch (TREE_CODE (*expr_p))
 	      {

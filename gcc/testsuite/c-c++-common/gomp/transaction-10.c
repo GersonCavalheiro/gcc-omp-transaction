@@ -4,6 +4,7 @@
 void
 newtm_test_identifier_errors (void)
 {
+  int a = 0, b = 0;
   #pragma omp transaction () /* { dg-error "expected identifier" } */
   { }
   #pragma omp transaction (a,) /* { dg-error "expected identifier" } */

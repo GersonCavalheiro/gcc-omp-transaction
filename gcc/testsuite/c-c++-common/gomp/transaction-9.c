@@ -8,6 +8,7 @@ int
 main (void)
 {
   int result = 0;
+  int single = 0, alpha = 0, beta = 0, gamma = 0, delta = 0, epsilon = 0;
   #pragma omp transaction (single)
   { result++; }
   #pragma omp transaction (TRANSACTION_NAMES)

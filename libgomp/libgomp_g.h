@@ -40,6 +40,9 @@ extern bool GOMP_barrier_cancel (void);
 
 /* critical.c */
 
+extern void GOMP_transaction_begin (void);
+extern void GOMP_transaction_register (void *, size_t);
+extern void GOMP_transaction_end (void);
 extern void GOMP_critical_start (void);
 extern void GOMP_critical_end (void);
 extern void GOMP_critical_name_start (void **);

@@ -20603,9 +20603,27 @@ tsubst_stmt (tree t, tree args, tsubst_flags_t complain, tree in_decl)
       add_stmt (t);
       break;
 
+    case OMP_TRANSACTION:
+      {
+	omp_parallel_combined_clauses = NULL;
+	tree objects = NULL_TREE;
+	for (tree item = OMP_TRANSACTION_OBJECTS (t); item;
+	     item = TREE_CHAIN (item))
+	  {
+	    tree object = tsubst_omp_clause_decl (TREE_VALUE (item), args,
+						complain, in_decl, NULL);
+	    if (object != error_mark_node)
+	      objects = tree_cons (NULL_TREE, object, objects);
+	  }
+	stmt = push_stmt_list ();
+	RECUR (OMP_BODY (t));
+	stmt = pop_stmt_list (stmt);
+	newtm_finish_transaction (EXPR_LOCATION (t), stmt, nreverse (objects));
+	break;
+      }
+
     case OMP_MASTER:
     case OMP_STRUCTURED_BLOCK:
-    case OMP_TRANSACTION:
       omp_parallel_combined_clauses = NULL;
       /* FALLTHRU */
     case OMP_SECTION:

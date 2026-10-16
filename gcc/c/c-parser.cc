@@ -24546,23 +24546,28 @@ c_parser_omp_barrier (c_parser *parser)
 #define OMP_CRITICAL_CLAUSE_MASK		\
 	( (OMP_CLAUSE_MASK_1 << PRAGMA_OMP_CLAUSE_HINT) )
 
-/* Parse transaction [(identifier [, identifier] ...)].  The optional names
-   currently have no semantic effect.  */
+/* Parse transaction [(identifier [, identifier] ...)] and retain its objects.  */
 
 static tree
 newtm_c_parser_transaction (location_t loc, c_parser *parser, bool *if_p)
 {
+  tree objects = NULL_TREE;
   if (c_parser_next_token_is (parser, CPP_OPEN_PAREN))
     {
       c_parser_consume_token (parser);
       do
 	{
-	  /* Resolve before consuming the name or entering the associated block.
-	     This is debugging output, so missing names are not errors.  */
+	  /* Preserve the declaration before entering the associated block.  */
 	  if (c_parser_next_token_is (parser, CPP_NAME))
 	    {
 	      tree name = c_parser_peek_token (parser)->value;
 	      tree decl = lookup_name (name);
+	      if (decl && decl != error_mark_node
+		  && (TREE_CODE (decl) == VAR_DECL
+		      || TREE_CODE (decl) == PARM_DECL))
+		objects = tree_cons (NULL_TREE, decl, objects);
+	      else
+		error_at (loc, "transaction argument %qE is not a variable", name);
 	      tree type = (decl && decl != error_mark_node && DECL_P (decl)
 			   ? TREE_TYPE (decl) : NULL_TREE);
 	      fprintf (stderr, "[newtm] transaction: %s: ",
@@ -24589,7 +24594,7 @@ newtm_c_parser_transaction (location_t loc, c_parser *parser, bool *if_p)
  end_pragma:
   c_parser_skip_to_pragma_eol (parser, false);
   tree body = c_parser_omp_structured_block (parser, if_p);
-  return newtm_finish_transaction (loc, body);
+  return newtm_finish_transaction (loc, body, nreverse (objects));
 }
 
 static tree
