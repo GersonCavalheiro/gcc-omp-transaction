@@ -57,6 +57,7 @@ de uma região parallel externa; transaction não cria uma equipe por si só.
 | [OPENMP_CRITICAL_AGENT.md](OPENMP_CRITICAL_AGENT.md) | Construção análoga para estudar parsing, lowering e mutexes; não define STM. |
 | [OPENMP_TRANSACTION_SCOPE_AGENT.md](OPENMP_TRANSACTION_SCOPE_AGENT.md) | Resolução de nomes, categorias, tipos, identidade e preservação/remapeamento de dados. |
 | [OPENMP_TRANSACTION_HASH_AGENT.md](OPENMP_TRANSACTION_HASH_AGENT.md) | Política geral, estrutura da hash, referências, callbacks e ponte atual de rastreamento. |
+| [OPENMP_TRANSACTION_HASH_IMPLEMENTATION_AGENT.md](OPENMP_TRANSACTION_HASH_IMPLEMENTATION_AGENT.md) | Especificação da próxima etapa: hash operacional, adaptação da ponte, testes e critérios de entrega; não altera o estado implementado. |
 | [OPENMP_TRANSACTION_ACCESS_AGENT.md](OPENMP_TRANSACTION_ACCESS_AGENT.md) | Contratos de newtm_read/write, objeto/deslocamento, sincronização e instrumentação. |
 | [OPENMP_TRANSACTION_ABORT.md](OPENMP_TRANSACTION_ABORT.md) | Ciclo de vida, estados de falha, cleanups, descarte, confirmação e reinício externo. |
 | [OPENMP_TRANSACTION_IMPLEMENTATION.md](OPENMP_TRANSACTION_IMPLEMENTATION.md) | Inventário de contratos, estado de implementação, evidências e histórico identificado como tal. |
