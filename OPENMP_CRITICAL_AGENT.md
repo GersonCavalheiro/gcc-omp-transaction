@@ -244,6 +244,24 @@ histórico da interface, mas descreve a forma nomeada em termos de
 `omp_set_lock`/`omp_unset_lock` e `omp_lock_t`. Para a interface efetivamente
 gerada nesta árvore, prevalecem `lower_omp_critical`, os builtins e `critical.c`.
 
+## Pré e pós-condições das primitivas de execução existentes
+
+Contratos descritivos de `libgomp/critical.c`, sem criação de novas APIs ou
+mudança da semântica. A inicialização do runtime/locks já deve estar concluída.
+
+| Serviço | Pré-condições | Pós-condições no retorno normal |
+| --- | --- | --- |
+| GOMP_critical_start | Execução não possui o lock sem nome; evitar aquisição recursiva e ordem de locks incompatível. | Lock sem nome adquirido por essa execução; outras aquisições do mesmo lock são excluídas até end; a chamada pode bloquear. |
+| GOMP_critical_end | A execução possui o lock obtido por start ainda não encerrado; exatamente um end correspondente. | Lock liberado, publicando os efeitos protegidos conforme a ordenação do mutex; não há barreira coletiva. |
+| GOMP_critical_name_start(pptr) | pptr válido, gravável, alinhado e compartilhado para a identidade do nome; slot inicialmente zero ou previamente inicializado pelo runtime, vivo durante todo o uso; não possui o mesmo lock. | Lock nomeado criado/publicado se necessário e adquirido; mesma identidade compartilha exclusão. O slot não pode ser alterado pelo programa. |
+| GOMP_critical_name_end(pptr) | Mesmo slot válido e lock possuído pela execução após name_start; nenhuma alteração/reutilização do slot. | Libera o lock correspondente; não destrói slot nem lock alocado e não constitui commit de transaction. |
+
+As funções são void e não devolvem status recuperável; falta de memória no
+caminho de criação segue o erro fatal da libgomp. Ponteiros inválidos, end sem
+start e dupla liberação são violações; não garantir diagnóstico. Os mutexes
+fornecem ordenação de memória, não rollback de efeitos. Esses contratos não
+concedem suporte implícito a critical dentro de uma STM com repetição.
+
 ## Consumidores auxiliares da representação
 
 Esses arquivos não são parsers da diretiva, mas precisam ser considerados ao

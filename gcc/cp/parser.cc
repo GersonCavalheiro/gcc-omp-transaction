@@ -48303,11 +48303,15 @@ newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
       parens.consume_open (parser);
       do
 	{
+	  location_t name_loc = cp_lexer_peek_token (parser->lexer)->location;
 	  tree name = cp_parser_identifier (parser);
 	  if (name == error_mark_node)
 	    goto end_pragma;
-	  /* Preserve the declaration from the bindings at the directive.  */
-	  tree decl = lookup_name (name);
+	  /* Use language lookup, including access and ambiguity checks.  */
+	  int saved_errorcount = errorcount;
+	  tree decl = cp_parser_lookup_name_simple (parser, name, name_loc);
+	  if (decl == error_mark_node && errorcount == saved_errorcount)
+	    cp_parser_name_lookup_error (parser, name, decl, NLE_NULL, name_loc);
 	  if (decl && decl != error_mark_node
 	      && (TREE_CODE (decl) == VAR_DECL
 		  || TREE_CODE (decl) == PARM_DECL))
@@ -48317,23 +48321,26 @@ newtm_cp_parser_transaction (cp_parser *parser, cp_token *pragma_tok,
 	      if (decl != error_mark_node)
 		objects = tree_cons (NULL_TREE, decl, objects);
 	    }
-	  else
-	    error_at (loc, "transaction argument %qE is not a variable", name);
-	  tree type = (decl && decl != error_mark_node && DECL_P (decl)
-		       ? TREE_TYPE (decl) : NULL_TREE);
-	  fprintf (stderr, "[newtm] transaction: %s: ",
-		   IDENTIFIER_POINTER (name));
-	  if (decl && TREE_CODE (decl) == NAMESPACE_DECL)
-	    fputs ("<no type>", stderr);
-	  else if (type && type != error_mark_node)
-	    fputs (type_as_string (type, TFF_PLAIN_IDENTIFIER), stderr);
 	  else if (decl && decl != error_mark_node)
-	    /* A visible overload set or namespace has no single object type.  */
-	    fputs (TREE_CODE (decl) == OVERLOAD ? "<overload>" : "<no type>",
-		   stderr);
-	  else
-	    fputs ("undef", stderr);
-	  fputc ('\n', stderr);
+	    error_at (name_loc, "transaction argument %qE is not a variable", name);
+	  if (flag_transaction_debug)
+	    {
+	      tree type = (decl && decl != error_mark_node && DECL_P (decl)
+			   ? TREE_TYPE (decl) : NULL_TREE);
+	      fprintf (stderr, "[newtm] transaction: %s: ",
+		       IDENTIFIER_POINTER (name));
+	      if (decl && TREE_CODE (decl) == NAMESPACE_DECL)
+		fputs ("<no type>", stderr);
+	      else if (type && type != error_mark_node)
+		fputs (type_as_string (type, TFF_PLAIN_IDENTIFIER), stderr);
+	      else if (decl && decl != error_mark_node)
+		/* A visible overload set or namespace has no single object type.  */
+		fputs (TREE_CODE (decl) == OVERLOAD ? "<overload>" : "<no type>",
+		       stderr);
+	      else
+		fputs ("undef", stderr);
+	      fputc ('\n', stderr);
+	    }
 	  if (!cp_lexer_next_token_is (parser->lexer, CPP_COMMA))
 	    break;
 	  cp_lexer_consume_token (parser->lexer);

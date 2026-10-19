@@ -3206,6 +3206,10 @@ EnumValue
 Enum(trampoline_impl) String(heap) Value(TRAMPOLINE_IMPL_HEAP)
 
 
+ftransaction-debug
+Common Var(flag_transaction_debug)
+Print experimental OpenMP transaction compiler diagnostics.
+
 ; Zero means that floating-point math operations cannot generate a
 ; (user-visible) trap.  This is the case, for example, in nonstop
 ; IEEE 754 arithmetic.

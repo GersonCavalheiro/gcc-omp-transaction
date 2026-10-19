@@ -1,3 +1,103 @@
+## Documentos de referência e integração futura
+
+| Documento | Responsabilidade |
+| --- | --- |
+| [SCOPE_AGENT](OPENMP_TRANSACTION_SCOPE_AGENT.md) | Resolução, tipos e preservação de identidade para os acessos. |
+| [HASH_AGENT](OPENMP_TRANSACTION_HASH_AGENT.md) | Estrutura da hash, referências e política transacional geral. |
+| [ACCESS_AGENT](OPENMP_TRANSACTION_ACCESS_AGENT.md) | Contratos propostos de newtm_read/write, sincronização e pontos de chamada. |
+| [ABORT](OPENMP_TRANSACTION_ABORT.md) | Propagação de falha, cleanups, descarte e reinício externo. |
+
+As primitivas newtm_read/write possuem somente esqueletos em
+libgomp/newtm-transaction.c/.h, com assinaturas e estados internos declarados.
+O contrato funcional permanece proposto; não existe ABI consolidada da ponte
+de acesso GOMP_*. Elas imprimem parâmetros e retornam INVALID, sem acessar os
+objetos ou modificar buffers/contexto. Os testes históricos abaixo não são
+validação funcional dessas primitivas.
+
+A integração funcional depende de hash/contexto reais, preservação do mapeamento
+objeto/deslocamento antes da eliminação do marcador GIMPLE, instrumentação com
+remapeamento OpenMP correto, reservas e dados privados. Cada retorno precisa ser
+verificado antes de usar o resultado. CONFLICT condena a tentativa externa;
+INVALID não autoriza retry. As primitivas sinalizam falha sem executar a limpeza
+completa: o controle de abort conduz cleanups, descarte e retirada de reservas.
+
+Permanecem pendentes a propagação segura entre funções, os acessos por cleanups,
+a definição da ponte e a distinção entre commit, descarte e retry no encerramento
+atualmente representado por TRY_FINALLY. Tipos, aliases e operações sem suporte
+precisam ser restringidos. Registro e rastreamento não comprovam STM funcional.
+
+## Esqueletos das primitivas de acesso
+
+Criados `libgomp/newtm-transaction.c` e `.h` com newtm_read/newtm_write, contexto
+opaco e enum newtm_access_status. Cada corpo faz um printf com ctx, object,
+offset, destination/source e size, seguido de fflush(stdout), e retorna
+NEWTM_ACCESS_INVALID. Não valida ou desreferencia parâmetros, não modifica
+buffers/contexto e não implementa hash, reservas, cópias privadas ou abort.
+
+Os arquivos estão nos fontes da libgomp em Makefile.am/Makefile.in, com objeto
+e dependência de compilação correspondentes. O cabeçalho não é instalado e os
+símbolos permanecem ocultos. Nenhuma chamada foi inserida no compilador ou na
+ponte GOMP_transaction_*; não há ABI pública nova.
+
+Validação desta etapa:
+
+- `make -C /usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp -j3 all` passou,
+  compilando os dois modos PIC/não PIC com -Wall -Werror e ligando bibliotecas
+  compartilhada e estática. Log final: `/tmp/newtm-access-skeleton-build-final.log`.
+- Teste C isolado ligado à biblioteca estática conferiu quatro chamadas,
+  parâmetros impressos, retorno INVALID, buffers/contexto inalterados, ponteiros
+  nulos, tamanho zero e SIZE_MAX. Fonte, executável e log estão em
+  `/tmp/newtm-access-skeleton/`. O teste não usa contexto transacional real:
+  verifica a ausência de operações do stub, não a semântica funcional.
+- nm/readelf confirmaram que newtm_read/write não são exportadas pela biblioteca
+  compartilhada; evidência em `/tmp/newtm-access-skeleton/symbols.log`.
+- `make -C transaction_test check` passou com a libgomp reconstruída: máximo
+  com 1/2/4 threads e caso de aninhamento lexical/por função.
+
+Também foram revisados todos os agentes: contratos consolidados da hash e seus
+callbacks, ponte atual, ciclo de vida conceitual, acessos, helpers do compilador
+e serviços critical existentes. Assinaturas internas dos stubs estão declaradas;
+contratos funcionais e a futura ABI de ponte continuam sujeitos às pendências
+explicitadas. Não foi executada a suíte completa do GCC/libgomp nesta etapa.
+
+## Inventário e localização dos contratos
+
+A revisão dos agentes identificou condições antes dispersas e lacunas no ciclo
+de vida. Os contratos agora estão reunidos por camada, com pré-condições,
+sucesso, falha, propriedade dos recursos e sincronização. Não confundir os
+contratos funcionais futuros com os retornos dos esqueletos atuais.
+
+| Operações concebidas | Contrato de referência |
+| --- | --- |
+| Nove newtm_hash_* e callbacks visit/destroy_policy | Seção de pré/pós-condições consolidadas do agente da hash. |
+| GOMP_transaction_begin/register/end e initialize/finalize de rastreamento | Seção da ponte atual no agente da hash; não oferece STM. |
+| newtm_read/write | Agente de acesso; contrato funcional e exceção explícita para os stubs. |
+| stm_begin/end/rollback, confirmação e backoff conceituais | Agente de abort; efeitos propostos e pendências de ABI. |
+| Cinco helpers newtm_* do compilador | Contratos locais abaixo, complementados pelo agente de escopo. |
+| GOMP_critical_start/end e name_start/name_end existentes | Agente de critical; contratos descritivos, sem alteração de implementação. |
+
+Funções genéricas do GCC/libgomp citadas como referência não são novas primitivas
+desta extensão. Novas funções auxiliares ou pontes deverão ter contrato próprio
+antes de serem usadas; não inferir uma ABI de nomes ilustrativos.
+
+### Contratos dos helpers atuais do compilador
+
+Estes helpers executam na compilação, não sobre memória transacional do programa.
+Erros de sintaxe/semântica seguem diagnósticos e recuperação do front-end; não
+são CONFLICT/INVALID do runtime. Contratos de alocação/GC são os usuais do GCC.
+
+| Helper | Pré-condições | Pós-condições atuais |
+| --- | --- | --- |
+| newtm_c_parser_transaction | Parser C válido na posição esperada pelo dispatcher; contexto de construção e bindings ativos; localização válida e if_p sob contrato do parser de bloco. | Consome a diretiva e analisa o corpo; resolve lista antes de entrar no corpo; preserva declarações aceitas na ordem; constrói/acrescenta OMP_TRANSACTION. Entradas inválidas são diagnosticadas e recuperadas até EOL, sem certificar validade de lista parcial. |
+| newtm_cp_parser_transaction | Parser/token de pragma válidos e contexto do dispatcher; bindings e estado C++ coerentes. | Mesmo percurso, com busca C++, acesso/ambiguidade, referências externas e dados para instanciação. Diagnóstico já emitido não implica nó de sucesso semanticamente válido. |
+| newtm_finish_transaction | Localização, corpo e lista de declarações como árvores GCC válidas/rastreadas; lista conforme representação aceita, possivelmente vazia. | Constrói OMP_TRANSACTION com tipo void, corpo e lista, acrescenta ao fluxo e retorna o nó. Não resolve nomes, registra endereços ou instrumenta acessos. |
+| newtm_build_transaction | Sequência GIMPLE válida e pertencente ao corpo a transferir, possivelmente vazia. | Retorna novo GIMPLE_OMP_TRANSACTION/GSS_OMP com esse corpo; não copia a lista GENERIC, não emite acesso ou commit. |
+| newtm_lower_transaction | Iterador válido sobre GIMPLE_OMP_TRANSACTION, contexto omp existente e corpo preparado para lower_omp no contexto externo. | Transforma o corpo com ctx->outer e substitui o marcador pela sequência; chamadas de rastreamento já presentes são preservadas. Não consultar o marcador removido; não há instrumentação funcional. |
+
+Na implementação futura, preservar/remapear metadados, atualizar consumidores e
+inserir acessos conforme o agente de acesso antes de remover o marcador. Esse
+trabalho altera as pós-condições e deve atualizar esta tabela na mesma entrega.
+
 ## Instrumentação de chamadas à hash (etapa atual)
 
 Os parsers preservam as declarações dos objetos no segundo operando de
@@ -63,7 +163,72 @@ nos diretórios `testsuite-newtm-calls`, `testsuite-newtm-calls-all`
 (critical) e `testsuite-newtm-calls-transaction` sob o build GCC. Os resultados
 da libgomp estão em seu diretório `testsuite/libgomp.sum` e `.log`.
 
-# Implementação de `#pragma omp transaction`
+## Leitura do histórico
+
+As seções a partir de “Histórico de implementação” registram etapas anteriores,
+sem valor normativo para trabalho novo. Descrições de listas descartadas,
+ausência de chamadas runtime e saída incondicional não se aplicam ao código
+atual. Os resultados de testes ali registrados são históricos, não reproduzidos
+por esta atualização. O estado atual é descrito no início deste arquivo.
+
+## Ajustes de manutenção
+
+- A resolução C++ usa `cp_parser_lookup_name_simple`, com verificações da
+  linguagem e diagnóstico de busca quando necessário. C distingue ausência de
+  declaração de entidade que não é variável. Os diagnósticos apontam o argumento.
+- A saída de tipos e de lowering do compilador é opcional, habilitada por
+  `-ftransaction-debug`, em stderr. Os logs do runtime continuam em stdout.
+- A lista é consumida na gimplificação; o marcador GIMPLE guarda o corpo com
+  as chamadas, não uma lista separada. Instrumentação futura deve planejar como
+  preservar a identidade dos objetos quando precisar dela no lowering.
+- O tratamento real dos estados de erro da hash é requisito da transição para
+  uma hash funcional. Enquanto as primitivas forem stubs, INVALID e handles
+  nulos são esperados exclusivamente pela ponte de rastreamento. Não reutilizar
+  essa ponte como implementação funcional sem revisar seus chamadores.
+
+## Validação dos ajustes de manutenção
+
+Rebuild e checagem incremental concluídos com
+`make -C /usr/src/gcc-build/gcc -j6 all`. Self-tests internos não estão
+habilitados neste build. Não houve alteração de fontes da libgomp nesta etapa;
+os testes usaram a biblioteca anteriormente reconstruída em
+`/usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp/.libs`.
+
+Resultados finais DejaGNU:
+
+| Seleção | C | C++ |
+| --- | --- | --- |
+| `gomp.exp=transaction-*` | 56 PASS | 213 PASS |
+| `gomp.exp=critical-*` | 20 PASS | 60 PASS |
+
+Sem FAIL, UNRESOLVED ou UNSUPPORTED nesses resumos finais. Os novos testes
+`transaction-lookup-1.c` e `.C` cobrem visibilidade, recuperação, acesso privado
+e ambiguidade. As expectativas de nome ausente foram atualizadas para os
+diagnósticos próprios de C/C++; não foram filtrados erros inesperados.
+
+Passaram também 21 comandos de verificação direta: silêncio por padrão,
+habilitação/desabilitação explícita de `-ftransaction-debug`, tipo da variável
+local que oculta a global, distinção de nome ausente, templates/lambdas e
+compilação/execução do teste de rastreamento em C/C++ com O0, O2 e LTO.
+Esses resultados validam manutenção e rastreamento, não memória transacional.
+
+Comandos reproduzíveis e evidências:
+
+- `/tmp/newtm-adjust-build.log` e `/tmp/newtm-adjust-build-check.log`.
+- `/tmp/newtm-adjust-regression.py`: comandos DejaGNU, passando o compilador e
+  os caminhos de ligação via RUNTESTFLAGS. Uma tentativa inicial sem esse
+  encaminhamento ligou uma libgomp antiga e falhou; os resultados finais usam
+  a biblioteca correta, conforme os comandos dos logs.
+- `/usr/src/gcc-build/gcc/testsuite-newtm-adjust-final/`: .sum/.log de transaction.
+- `/usr/src/gcc-build/gcc/testsuite-newtm-adjust/`: .sum/.log de critical.
+- `/tmp/newtm-adjust-verify.py` e `/tmp/newtm-adjust-verify/results.json`:
+  verificações diretas e seus logs individuais.
+
+A suíte completa não foi executada. Não houve instalação do compilador.
+
+# Histórico de implementação (não normativo)
+
+
 
 ## Depuração de identificadores e tipos
 

@@ -228,6 +228,22 @@ corretamente no host não prova suporte no dispositivo.
    adequados e descreva limitações. Atualize documentação aplicável, como
    `libgomp/libgomp.texi` e manuais em `gcc/doc`, se o comportamento exigir.
 
+## Contratos das primitivas acrescentadas por uma extensão
+
+Para cada nova primitiva ou callback, documentar argumentos/unidades, contexto e
+proprietário, vida útil, limites/aliasing, pré-condições verificáveis, efeitos em
+sucesso e falha, saída inicializada ou preservada, referências consumidas/retidas,
+locks/ordenação e ponto de invocação. Distinguir violação de contrato de falha
+recuperável; não prometer validação de ponteiros pendentes. Toda saída deve ter
+propriedade de limpeza definida e não deixar lock retido inadvertidamente.
+
+Na extensão transaction, consultar o inventário em
+[OPENMP_TRANSACTION_IMPLEMENTATION.md](OPENMP_TRANSACTION_IMPLEMENTATION.md) e
+os contratos especializados de hash, acesso e abort ali indicados. Funções
+existentes usadas como exemplo não viram novas APIs; protótipos ilustrativos
+não constituem ABI aprovada. Atualizar o contrato quando um esqueleto passar a
+implementar operações reais, sem relatar logs como prova de funcionalidade.
+
 ## Validação e critérios de conclusão
 
 Use DejaGNU e os diretórios existentes:

@@ -323,7 +323,8 @@ Objective-C and Objective-C++ Dialects}.
 @xref{OpenMP and OpenACC Options,,Options Controlling OpenMP and OpenACC}.
 @gccoptlist{-foffload=@var{arg}  -foffload-options=@var{arg}
 -fopenacc  -fopenacc-dim=@var{geom}
--fopenmp  -fopenmp-simd  -fopenmp-target-simd-clone@r{[}=@var{device-type}@r{]}}
+-fopenmp  -fopenmp-simd  -fopenmp-target-simd-clone@r{[}=@var{device-type}@r{]}
+-ftransaction-debug}
 
 @item Diagnostic Message Formatting Options
 @xref{Diagnostic Message Formatting Options,,Options to Control Diagnostic Messages Formatting}.
@@ -5568,6 +5569,13 @@ In fixed source form Fortran, the sentinels can also start with
 This option implies @option{-pthread}, and thus is only supported on
 targets that have support for @option{-pthread}. @option{-fopenmp}
 implies @option{-fopenmp-simd}.
+
+@item -ftransaction-debug
+@opindex ftransaction-debug
+Print identifier types and lowering messages for the experimental
+@code{#pragma omp transaction} extension to standard error.  These compiler
+messages are disabled by default.  This option does not enable OpenMP or
+control the provisional runtime tracing messages.
 
 @opindex fopenmp-simd
 @opindex fno-openmp-simd

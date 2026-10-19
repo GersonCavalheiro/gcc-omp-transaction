@@ -7,7 +7,8 @@ Oriente a implementação da resolução dos identificadores de
 visibilidade no ponto da diretiva e obter seus tipos. Leia também
 [OPENMP_AGENT.md](OPENMP_AGENT.md),
 [OPENMP_CRITICAL_AGENT.md](OPENMP_CRITICAL_AGENT.md) e
-[OPENMP_TRANSACTION_IMPLEMENTATION.md](OPENMP_TRANSACTION_IMPLEMENTATION.md).
+[OPENMP_TRANSACTION_IMPLEMENTATION.md](OPENMP_TRANSACTION_IMPLEMENTATION.md) e
+[OPENMP_TRANSACTION_ACCESS_AGENT.md](OPENMP_TRANSACTION_ACCESS_AGENT.md).
 
 Este documento foi elaborado por inspeção dos fontes locais. Os caminhos são
 relativos à raiz dos fontes `/usr/src/gcc-16.2.0`; o build fica em
@@ -16,22 +17,20 @@ A criação deste guia não implementa a validação no compilador nem altera a
 semântica da diretiva. Não acrescente sincronização ou memória transacional
 como consequência da resolução dos nomes.
 
-## Estado encontrado
+## Estado atual
 
-- `newtm_c_parser_transaction`, em `gcc/c/c-parser.cc`, consome cada
-  `CPP_NAME` com `c_parser_require` e descarta seu valor.
-- `newtm_cp_parser_transaction`, em `gcc/cp/parser.cc`, chama
-  `cp_parser_identifier` e descarta o identificador retornado.
-- Ambos analisam o corpo depois do fim do pragma e chamam
-  `newtm_finish_transaction(loc, body)`, em `gcc/c-family/c-omp.cc`.
-- `OMP_TRANSACTION` possui somente o corpo. O construtor
-  `newtm_build_transaction` e o lowering também não recebem identificadores.
-- Em `gcc/cp/pt.cc`, o caso `OMP_TRANSACTION` compartilha o tratamento de
-  construções que só instanciam o corpo; não substitui uma lista de argumentos.
+Os parsers resolvem os nomes antes do corpo, aceitam VAR_DECL/PARM_DECL e
+preservam as declarações em OMP_TRANSACTION_OBJECTS. C++ usa a busca do parser
+com verificação de acesso e ambiguidade e processa referências automáticas
+externas. A instanciação substitui a lista em cp/pt.cc. A gimplificação exige
+tipo completo de tamanho constante, registra referências C++ pelo objeto
+referido e converte os itens em chamadas runtime. A lista não permanece como
+operando do marcador GIMPLE. Tipos e lowering só são impressos com
+-ftransaction-debug.
 
-Aceitar um token identificador não resolve seu nome. O `IDENTIFIER_NODE`
-representa a grafia; não é a declaração e não fornece o tipo do objeto.
-O pré-processador não determina a visibilidade nem o tipo C/C++.
+As orientações abaixo são critérios de manutenção e integração futura, não
+uma lista de funcionalidades ausentes. Conferir o estado em
+OPENMP_TRANSACTION_IMPLEMENTATION.md antes de alterar representações.
 
 ## Momento correto e contrato semântico
 
@@ -99,7 +98,7 @@ continuar vírgula / fechamento / fim do pragma
 
 O namespace ordinário de C inclui variáveis, funções e typedefs; encontrar um
 nome não prova que é variável. Um tag `struct S` pertence a outro namespace e
-não deve ser buscado como variável. Confira também `id_kind`: o parser atual
+não deve ser buscado como variável. Confira também `id_kind`: o parser
 aceita `CPP_NAME` sem restringir a `C_ID_ID`, e um typedef pode chegar como nome
 com outra classificação. Não transforme uma restrição de categoria em uma
 mensagem enganosa de identificador inexistente.
@@ -174,6 +173,45 @@ tratamento próprio. Não use `TYPE_SIZE_UNIT` como teste de existência do tipo
 e não converta seu valor para inteiro sem validar que é constante e cabe no
 formato de destino. Não force layout de tipos para a simples consulta.
 
+## Contrato de identidade para instrumentação de acessos
+
+Nome visível, entidade admitida e tipo instrumentável são verificações distintas.
+A aceitação atual de VAR_DECL/PARM_DECL com tipo completo de tamanho constante
+não comprova suporte a todas as operações desse tipo. Na integração funcional,
+validar o subconjunto do agente de acesso, respeitando const, volatile, atômicos,
+vida útil e propriedades C++; não apagar qualificadores para admitir escritas.
+As restrições dependentes devem ser repetidas após instanciação.
+
+Preservar dados suficientes para o compilador construir os argumentos propostos
+`object`, `offset` e `size`, sem resolver novamente o nome no lowering:
+
+| Informação | Responsabilidade |
+| --- | --- |
+| Declaração resolvida e localização | Identidade lexical e diagnóstico do argumento/acesso. |
+| Tipo e qualificadores originais | Permissão de leitura/escrita e classificação dos acessos admitidos. |
+| Objeto canônico e extensão registrada | Unidade inteira de conflito e validação dos limites de subacessos. |
+| Subobjeto e deslocamento em bytes | Campo/elemento suportado dentro do objeto canônico. |
+| Expressões de endereço/índice | Preservar avaliação única e instrumentar suas próprias leituras quando necessário. |
+
+A resolução da lista fornece a identidade inicial; o mapeamento de cada acesso
+para subobjeto/deslocamento pertence à instrumentação posterior. Não antecipar
+endereços de execução no parser nem avaliar índices ou objetos para obter tipos.
+Ponteiros listados não incluem automaticamente a memória apontada; referências
+C++ designam o referido. Aliases suportados compartilham a mesma chave canônica;
+a hash de igualdade exata não resolve aliases ou sobreposições por conta própria.
+
+Ao transportar esses dados, remapear declarações em templates, inlining,
+funções aninhadas e outlining. Usar a instância efetiva de private/reduction
+externos. Preservar metadados antes da varredura OpenMP quando afetarem captura;
+o marcador GIMPLE atual guarda somente o corpo. Atualizar walkers, cópia e dumps
+quando o layout mudar, sem guardar ponteiros para tokens ou estruturas efêmeras.
+
+Conhecer o binding não autoriza acesso: o registro precisa ter ocorrido na
+execução antes da operação. Uma lista interna não torna transacionais acessos
+anteriores. Escritas externas não listadas permanecem restritas; a política de
+leituras externas não listadas continua pendente. Não usar o novo contrato para
+ampliar silenciosamente a gramática de identificadores simples.
+
 ## Templates e preservação da informação
 
 Um parâmetro `T &x` de template pode estar perfeitamente visível mesmo quando
@@ -189,11 +227,11 @@ preservam identidade nem bindings.
 
 Nesse segundo caso, será necessário planejar alterações de representação:
 
-1. Acrescentar armazenamento e acessores a `OMP_TRANSACTION`, atualizar
+1. Preservar o armazenamento e os acessores existentes em `OMP_TRANSACTION`,
    `newtm_finish_transaction` e seus chamadores.
 2. Em `gcc/cp/pt.cc`, separar o tratamento de transaction quando necessário,
    substituir os novos dados com a infraestrutura de templates e repetir as
-   verificações dependentes. O caso atual só substitui o corpo.
+   verificações dependentes. O caso atual já substitui corpo e lista; preservar esse tratamento.
 3. Se os dados precisarem chegar ao lowering, atualizar também o layout GIMPLE,
    `newtm_build_transaction`, a conversão em `gcc/gimplify.cc` e seus consumidores.
 4. Auditar walkers, cópia, dumps, módulos C++ e eventual serialização, conforme
@@ -211,7 +249,7 @@ de uma variável `private` de uma região OpenMP externa será usada em runtime.
 Preserve a recuperação até `CPP_PRAGMA_EOL` e analise o corpo mesmo após erro
 na lista, conforme o fluxo atual. Um argumento inválido não deve impedir a
 análise dos seguintes nem corromper a próxima construção. Defina a política
-de duplicatas separadamente; hoje nomes repetidos são aceitos.
+de duplicatas separadamente; nomes repetidos são aceitos e deduplicados por endereço no contexto runtime.
 
 Adicione casos compartilhados em `gcc/testsuite/c-c++-common/gomp/` e casos
 C++ específicos em `gcc/testsuite/g++.dg/gomp/`, incluindo:
@@ -238,10 +276,25 @@ seguindo os comandos do relatório de implementação. Confira `.sum` e `.log`,
 distinga falhas anteriores de novas regressões e relate os testes realmente
 executados. Este guia não executou build ou testes do compilador.
 
+## Pré e pós-condições do trabalho de resolução
+
+Os contratos dos parsers e construtores estão reunidos em
+[OPENMP_TRANSACTION_IMPLEMENTATION.md](OPENMP_TRANSACTION_IMPLEMENTATION.md).
+A resolução exige bindings válidos no ponto da lista e árvores/localizações
+com vida útil adequada; em sucesso preserva identidade e tipo sem avaliar o
+objeto. Em erro, diagnostica/recupera sem transformar entidade inválida em objeto
+registrável nem certificar a validade dos demais dados parcialmente construídos.
+Não adquire reservas nem cria efeito runtime. Instanciação e remapeamento devem
+preservar os contratos antes de invocar os serviços do agente de acesso.
+
 ## Critério de conclusão da implementação
 
 A resolução usa o escopo do ponto da diretiva, respeita ocultação e regras da
 linguagem, distingue ausência de categoria inválida, obtém tipos sem conversões
 indevidas e trata dependência C++ no momento correto. Qualquer informação usada
 depois do parsing tem representação persistente e seus consumidores atualizados.
+Na integração funcional, verificar também identidade canônica, mapeamento dos
+subacessos e permissões segundo o agente de acesso, com testes de campo/elemento,
+referências, aliases suportados, tipos rejeitados e private/reduction externos.
+Não apresentar validação de nomes como prova de cobertura da instrumentação.
 Relate o contrato de entidades aceitas, os testes e limitações remanescentes.

@@ -24561,22 +24561,28 @@ newtm_c_parser_transaction (location_t loc, c_parser *parser, bool *if_p)
 	  if (c_parser_next_token_is (parser, CPP_NAME))
 	    {
 	      tree name = c_parser_peek_token (parser)->value;
+	      location_t name_loc = c_parser_peek_token (parser)->location;
 	      tree decl = lookup_name (name);
 	      if (decl && decl != error_mark_node
 		  && (TREE_CODE (decl) == VAR_DECL
 		      || TREE_CODE (decl) == PARM_DECL))
 		objects = tree_cons (NULL_TREE, decl, objects);
-	      else
-		error_at (loc, "transaction argument %qE is not a variable", name);
-	      tree type = (decl && decl != error_mark_node && DECL_P (decl)
-			   ? TREE_TYPE (decl) : NULL_TREE);
-	      fprintf (stderr, "[newtm] transaction: %s: ",
-		       IDENTIFIER_POINTER (name));
-	      if (type && type != error_mark_node)
-		print_generic_expr (stderr, type);
-	      else
-		fputs ("undef", stderr);
-	      fputc ('\n', stderr);
+	      else if (!decl)
+		error_at (name_loc, "transaction argument %qE is not declared", name);
+	      else if (decl != error_mark_node)
+		error_at (name_loc, "transaction argument %qE is not a variable", name);
+	      if (flag_transaction_debug)
+		{
+		  tree type = (decl && decl != error_mark_node && DECL_P (decl)
+			       ? TREE_TYPE (decl) : NULL_TREE);
+		  fprintf (stderr, "[newtm] transaction: %s: ",
+			   IDENTIFIER_POINTER (name));
+		  if (type && type != error_mark_node)
+		    print_generic_expr (stderr, type);
+		  else
+		    fputs ("undef", stderr);
+		  fputc ('\n', stderr);
+		}
 	    }
 	  if (!c_parser_require (parser, CPP_NAME, "expected identifier"))
 	    goto end_pragma;

@@ -11069,6 +11069,11 @@ runtime library.
 @xref{OpenMP and OpenACC Options}, for additional options useful with
 @option{-fopenmp}.
 
+Compiler debugging messages for this extension are disabled by default;
+@option{-ftransaction-debug} enables identifier/type and lowering messages on
+standard error.  This option does not control the provisional runtime tracing
+messages on standard output.
+
 This compiler also provides the experimental C and C++ extension
 @code{#pragma omp transaction}, enabled by @option{-fopenmp}:
 

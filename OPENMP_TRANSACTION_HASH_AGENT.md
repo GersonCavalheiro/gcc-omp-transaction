@@ -8,7 +8,7 @@ processo. A ponte ignora os estados de falha somente para permitir a sequência
 de mensagens nesta etapa. Consulte a seção inicial de
 `OPENMP_TRANSACTION_IMPLEMENTATION.md` para o percurso e as limitações atuais.
 O restante deste documento preserva a especificação da implementação futura;
-os parágrafos históricos sobre `gomp_fatal` não descrevem mais os corpos atuais.
+o estado atual substitui relatos anteriores sobre `gomp_fatal`.
 
 # Agente orientador: biblioteca hash de transaction
 
@@ -22,6 +22,29 @@ Leia também `OPENMP_AGENT.md`, `OPENMP_CRITICAL_AGENT.md`,
 Confira sempre o código: partes desses documentos descrevem estados anteriores.
 Os caminhos são relativos à raiz dos fontes; o build existente fica em
 `/usr/src/gcc-build`. Localize funções pelo nome, pois linhas mudam.
+
+## Integração com os agentes de acesso e abort
+
+Consultar [OPENMP_TRANSACTION_ACCESS_AGENT.md](OPENMP_TRANSACTION_ACCESS_AGENT.md)
+para as assinaturas propostas de `newtm_read/write`, pré/pós-condições,
+identidade objeto/deslocamento, pontos de invocação e sincronização dos acessos.
+Consultar [OPENMP_TRANSACTION_ABORT.md](OPENMP_TRANSACTION_ABORT.md) para a
+propagação da falha, cleanups, descarte e reinício da tentativa externa.
+
+A divisão de responsabilidades é:
+
+| Camada | Responsabilidade |
+| --- | --- |
+| Hash | Chaves, buckets, referências físicas e acesso protegido aos metadados opacos. |
+| Primitivas de acesso e política | Reservas, visão privada, operação solicitada e sinalização da falha. |
+| Controle de abort | Interromper continuação normal, conduzir cleanups, descartar a tentativa e decidir reinício ou erro permanente. |
+
+Este arquivo mantém o contrato estrutural da hash e a política geral. O agente
+de acesso detalha as operações; não criar aqui uma segunda definição divergente
+das assinaturas ou dos estados `NEWTM_ACCESS_*`. As assinaturas já têm
+esqueletos internos; os contratos funcionais continuam propostos, sem ABI
+de ponte `GOMP_*` consolidada. Os estados de acesso
+não são os estados `NEWTM_HASH_*`; traduzi-los explicitamente.
 
 ## Contrato estabelecido e decisões propostas
 
@@ -69,9 +92,9 @@ adiadas em cópias privadas, abort da transação solicitante e flat nesting.
 A lista identifica os objetos elegíveis; a reserva indica a permissão de acesso;
 a cópia privada contém os valores pendentes. Esses três conceitos são distintos.
 
-Esta é a política acordada para implementação. Na árvore estudada, os parsers
-consultam nomes somente para depuração, as listas não chegam à representação
-intermediária e o lowering elimina o marcador preservando o corpo comum. Não
+Esta é a política acordada para implementação. No código atual, os parsers preservam as declarações na árvore e a
+gimplificação converte a lista em chamadas de rastreamento. O lowering elimina
+o marcador preservando esse corpo instrumentado apenas para registro. Não
 apresentar este documento como evidência de que o protocolo já está implementado
 ou validado. Ao implementar, atualizar este parágrafo com o estado real.
 
@@ -110,9 +133,11 @@ validar leituras enquanto as reservas persistirem.
 4. **Confirmação externa:** se não houve abort, preparar a publicação, conservar
    todas as reservas e publicar todos os valores pendentes. Em seguida retirar
    reservas e participações, liberar referências e buffers e desativar o contexto.
-5. **Conflito:** impedir o acesso solicitante e marcar a tentativa para abort.
-   Não continuar executando normalmente, não publicar e não abortar a transação
-   que já detém a reserva incompatível.
+5. **Conflito:** a primitiva impede o acesso solicitante, marca a tentativa
+   para abort e retorna CONFLICT. Não executa a limpeza completa dentro do
+   acesso. O chamador verifica o retorno e transfere para o controle de falha,
+   sem consumir resultado inválido nem continuar normalmente. Não publicar nem
+   abortar a transação que já detém a reserva incompatível.
 6. **Abort e repetição:** executar os cleanups suportados com o estado ainda
    válido, descartar modificações privadas, retirar reservas/participações e
    liberar referências. Desfazer todos os níveis internos de uma só vez, aguardar
@@ -237,11 +262,14 @@ a publicação. Depois da primeira escrita publicada, não permitir abort por
 conflito nem executar código do usuário ou operação potencialmente lançadora;
 a fase de publicação deve terminar antes da liberação de reservas.
 
-Conflito antes de um acesso causa abort da transação lógica inteira: descartar
-escritas privadas, retirar todas as reservas/participações e liberar referências
-do contexto. Reiniciar a partir da entrada externa, inclusive quando o conflito
-ocorreu em uma região interna ou função chamada. Não executar o commit de uma
-transação abortada. A implementação de reinício deve respeitar cleanups e vida
+Conflito antes de um acesso condena a transação lógica inteira. A primitiva
+impede o acesso e sinaliza CONFLICT; o controle de abort conduz posteriormente
+cleanups, descarte das escritas privadas, retirada de reservas/participações e
+liberação das referências. Não executar essa limpeza completa dentro de
+read/write. Reiniciar a partir da entrada externa, inclusive quando o conflito
+ocorreu em uma região interna ou função chamada. INVALID identifica falha
+permanente, não um conflito a repetir. Não executar o commit de uma tentativa
+condenada nem converter erro permanente em retry. A implementação de reinício deve respeitar cleanups e vida
 útil de objetos C/C++; não usar salto não local arbitrário atravessando destrutores.
 Primeiro impedir a continuação normal e executar os cleanups suportados da
 tentativa enquanto contexto e dados privados ainda são válidos; depois descartar
@@ -386,9 +414,10 @@ Implementar em C, seguindo as convenções locais da libgomp:
   encadeamento, alocação, sincronização e contagem de referências.
 - `libgomp/newtm-hash.h`: interface interna, tipos opacos, contratos e código
   de estado. Não instalar esse cabeçalho como API pública OpenMP.
-- `libgomp/newtm-transaction.c` e `libgomp/newtm-transaction.h`: camada futura
-  de contexto e política transacional. Esses arquivos são pontos previstos de
-  integração, não requisito para entregar apenas a biblioteca hash.
+- `libgomp/newtm-transaction.c` e `libgomp/newtm-transaction.h`: esqueletos
+  internos de leitura/escrita que imprimem parâmetros e retornam INVALID.
+  Contexto e política funcionais continuam futuros; nenhuma chamada a esses
+  acessos é gerada pelo compilador nesta etapa.
 - `OPENMP_TRANSACTION_HASH_AGENT.md`: manter esta especificação coerente com
   as decisões e limitações da implementação efetivamente entregue.
 
@@ -580,6 +609,52 @@ e não deve ser chamada em cada acesso transacional. Seu resultado pode mudar
 assim que os locks forem liberados. Não acrescentar iteração pública ou redimensionamento sem
 necessidade demonstrada.
 
+## Pré e pós-condições consolidadas da hash
+
+Estes contratos são da implementação funcional futura, não dos stubs atuais.
+Toda pós-condição de preservação significa ausência de alteração causada pela
+chamada; outras threads podem continuar alterando a tabela. Nenhum retorno
+normal deixa mutex adquirido pelo chamador. Endereços de objetos são chaves:
+a hash nunca lê/escreve seus valores nem adquire reservas transacionais.
+
+Para funções com saída `out`, exigir armazenamento gravável e exclusivo durante
+a chamada, sem sobreposição com tabela, entrada ou metadados. O conteúdo anterior
+de *out não é liberado automaticamente; o chamador deve preservar referências
+que já possuía. Uma falha com out válido sempre escreve NULL. Ponteiros não nulos
+pendentes não são detectáveis com segurança: não prometer validá-los.
+
+| Primitiva | Pré-condições para sucesso | Pós-condições em sucesso | Falha/violação |
+| --- | --- | --- | --- |
+| `newtm_hash_create` | out válido; capacidade positiva representável; destrutor válido ou NULL sob contrato de metadados sempre nulos. | OK; *out é tabela nova, vazia, com capacidade imutável e todos os mutexes inicializados; chamador assume a propriedade da tabela. | INVALID para out nulo/capacidade zero; OVERFLOW antes de alocar; *out=NULL quando possível; nenhuma tabela parcialmente publicada. Falta de memória é fatal. |
+| `newtm_hash_destroy` | Tabela válida e quiescência de todos os usuários, incluindo callbacks e destruidores; não basta observar contagem zero. | OK somente sem entradas; todos os recursos estruturais liberados; table e referências ao seu armazenamento tornam-se inválidos. | INVALID para NULL; BUSY deixa a tabela inteira utilizável, sem destruição parcial. Destruição concorrente é violação, não protegida pelos mutexes. |
+| `newtm_hash_acquire` | Tabela válida; chave não nula; size positivo; out válido; nenhuma destruição concorrente. | OK; *out mantém exatamente uma nova referência do chamador; entrada nova tem chave/tamanho imutáveis e metadados NULL, ou a mesma geração existente é reutilizada. | INVALID, SIZE_MISMATCH ou OVERFLOW conforme o argumento/contador; sem inserção ou incremento parcial; referências anteriores preservadas. Alocação fatal não finge retorno recuperável. |
+| `newtm_hash_lookup_acquire` | Tabela válida; chave não nula; out válido; nenhuma destruição concorrente. | OK; uma nova referência a entrada existente com a chave exata; não insere nem muda tamanho/metadados. | NOT_FOUND se ausente; INVALID para nulos; OVERFLOW sem incrementar. *out=NULL; nenhuma referência adquirida na falha. |
+| `newtm_hash_release` | Tabela e entrada correspondentes; chamador possui a referência liberada; reservas/participações sustentadas por ela já retiradas; nenhum uso posterior dessa referência. | Exatamente uma referência consumida. Se a última, entrada desligada sob lock, destrutor não nulo executado se houver metadados e entrada liberada fora do lock. Caso contrário, entrada continua viva. | Sem retorno de estado. NULL, tabela errada, dupla liberação ou reserva ainda sustentada são violações; não tratar como sucesso ou tentar validar memória já liberada. |
+| `newtm_hash_entry_address` | Entrada válida e referência retida pelo chamador durante a consulta. | Retorna a chave imutável; não adquire/consome referência nem estende a vida do objeto do programa. | Sem valor sentinela de erro no contrato funcional; argumento inválido é violação. |
+| `newtm_hash_entry_size` | Entrada válida e referência retida pelo chamador durante a consulta. | Retorna tamanho imutável positivo; não altera estado ou referências. | Sem retorno de erro; zero dos stubs não é resposta funcional válida. |
+| `newtm_hash_entry_visit` | Tabela/entrada correspondentes, referência retida, callback não nulo, argument válido para esse callback; fora de callback/destrutor da mesma tabela. | Callback chamado uma vez sob mutex do bucket; alterações dos metadados tornam-se visíveis pela sincronização; referência do chamador preservada e lock liberado antes de retornar. | Sem estado estrutural de erro; resultado da política via argument. Não há rollback automático das alterações do callback. Violação de pré-condição não é conflito transacional. |
+| `newtm_hash_count` | Tabela válida, sem destruição concorrente; chamada fora de visit/destrutor e sem mutex de bucket já retido. | Número de entradas em uma fotografia consistente, saturado em SIZE_MAX; nenhum contador/referência alterado; todos os locks liberados. | Sem retorno de erro; NULL é violação. Resultado pode mudar após soltar os locks; não prova quiescência para destroy. |
+
+### Contratos dos callbacks concebidos
+
+`newtm_hash_visit_fn`: pré-condições — chave/tamanho válidos, slot policy_data
+pertencente a entrada retida, mutex do bucket já adquirido pela hash, argument
+sob contrato do chamador. Pós-condições — slot continua NULL ou contém metadados
+válidos de propriedade da entrada; metadados substituídos foram corretamente
+liberados/transferidos; callback retorna normalmente sem liberar o mutex,
+consumir referência ou guardar o endereço do slot para uso posterior. Não
+reentrar na tabela, esperar por reservas, lançar exceção ou executar código do
+usuário. Se sinalizar CONFLICT/INVALID via argument, manter metadados consistentes;
+o callback não executa descarte integral da tentativa.
+
+`newtm_hash_policy_destroy_fn`: pré-condições — metadados não nulos da geração
+retirada, última referência física consumida, participações/reservas já retiradas
+e nenhum mutex de bucket retido pelo chamador. Pós-condições — recursos dessa
+geração liberados exatamente uma vez, sem alterar o objeto do programa ou uma
+nova entrada de mesma chave. Não reentrar na tabela, acessar entrada retirada,
+lançar exceção nem depender de quiescência de entradas de outra geração. Não há
+retorno de erro recuperável nem rollback do destrutor.
+
 ## Limites de concorrência e de substituição de política
 
 Contagem de referências garante vida útil, não indica quantas transações estão
@@ -640,23 +715,23 @@ mecanismos existentes em `libgomp/env.c`, `libgomp/libgomp.h` e `critical.c`;
 respeitar targets onde `GOMP_MUTEX_INIT_0` é falso. A configuração da capacidade
 fica na inicialização, sem alterar uma tabela já em uso.
 
-Interface de ligação sugerida para o compilador, separada da hash:
+Interface provisória atual, separada das primitivas hash:
 
 ```c
-void *GOMP_transaction_begin (void);
-void GOMP_transaction_register (void *context, void *address, size_t size);
-void GOMP_transaction_end (void *context);
+void GOMP_transaction_begin (void);
+void GOMP_transaction_register (void *address, size_t size);
+void GOMP_transaction_end (void);
 ```
 
-`begin` cria um contexto somente na entrada externa; entradas internas
-reutilizam o contexto ativo e incrementam sua profundidade. `register` registra
-cada objeto uma única vez nesse contexto. `end` decrementa a profundidade;
-somente na saída externa encerra as participações e libera as referências. Essas
-assinaturas são uma proposta para integrar o registro, não uma ABI já existente
-nem uma implementação de transações completas. A política acordada acima exige
-serviços adicionais de acesso e abort/reinício; saída excepcional e integração
-com tasks precisam do tratamento restrito descrito neste documento. `end` só
-pode confirmar a tentativa externa que permaneceu válida.
+O contexto é obtido internamente da thread. `begin` cria o contexto na entrada
+externa e incrementa sua profundidade; `register` deduplica objetos; `end`
+libera os registros apenas na saída externa. Esses serviços só fazem
+rastreamento, sem commit, reservas ou armazenamento especulativo.
+
+Uma interface futura com contexto explícito é apenas uma proposta; não alterar
+as assinaturas atuais como consequência da implementação estrutural da hash.
+A política funcional exige serviços adicionais de acesso, propagação de falha
+e reinício, com ABI e tratamento de exceções definidos antes da integração.
 
 Somente os serviços `GOMP_*` chamados pelo código gerado devem integrar a ABI,
 com declarações em `libgomp/libgomp_g.h` e exportação versionada coerente em
@@ -664,6 +739,40 @@ com declarações em `libgomp/libgomp_g.h` e exportação versionada coerente em
 acrescentar símbolos a uma versão publicada arbitrariamente. A integração deve
 preservar a tabela global única entre unidades de tradução que usam o mesmo
 runtime; não gerar uma tabela estática em cada arquivo compilado.
+
+### Pré e pós-condições da ponte atual de rastreamento
+
+Os três serviços atuais retornam void. As condições abaixo descrevem seu uso
+válido; não presumir que toda violação já seja detectada. Falhas explicitamente
+detectadas usam gomp_fatal; não existe retorno booleano de sucesso/commit.
+
+| Serviço | Pré-condições | Pós-condições no retorno normal |
+| --- | --- | --- |
+| `GOMP_transaction_begin()` | Runtime/thread utilizáveis; execução síncrona sem troca de tarefa; contexto anterior ausente ou válido; profundidade incrementável. | Criação global solicitada uma vez sob lock de inicialização; contexto da thread criado ou reutilizado; profundidade anterior +1, ou 1 se externo; registros anteriores preservados. Nenhum objeto lido/reservado. |
+| `GOMP_transaction_register(address, size)` | Entrada begin ativa; address não nulo, size positivo e objeto vivo, tipo/endereço fornecidos corretamente pelo compilador; duplicatas com mesmo tamanho. | Objeto novo acrescentado ao contexto com uma chamada acquire; duplicata não acrescenta nem adquire de novo. Profundidade não muda; nenhum valor do objeto lido/escrito. |
+| `GOMP_transaction_end()` | Entrada begin correspondente ainda não encerrada na mesma execução; contexto presente e profundidade positiva. | Profundidade reduzida em um. Se ainda positiva, registros preservados. Se zero, uma release por registro distinto, registros/contexto liberados e ponteiro da thread limpo. Memória do programa não alterada, nenhum commit/rollback realizado. |
+
+A ponte ignora INVALID da hash apenas porque os stubs deixam handles nulos.
+Logo, criação solicitada e registro de rastreamento não significam tabela/entrada
+reais. Argumentos nulos ou size zero em register não são atualmente validados
+como no contrato funcional; não apresentar essa ausência de diagnóstico como
+suporte. Overflow de profundidade, tamanho incompatível em duplicata e saída
+sem contexto são fatais nos caminhos que os verificam.
+
+`newtm_trace_initialize`: chamado uma vez na inicialização da biblioteca, antes
+do uso concorrente; ao retornar, o lock global está utilizável, inclusive em
+targets que exigem inicialização explícita. Não cria a tabela nem contexto.
+`newtm_trace_finalize`: exige fim de todos os usuários e contextos; solicita
+destroy se houve uso e destrói o lock. Não limpa threads ainda ativas nem permite
+novas chamadas. O stub de destroy ainda não libera tabela real; sua falha é
+ignorada somente na etapa de rastreamento.
+
+Para registro funcional futuro, exigir contexto ativo/proprietário, endereço
+e tamanho válidos, tipo admitido e vida útil até a saída externa. Sucesso deve
+manter uma referência real por objeto distinto, sem adquirir reserva nem copiar
+seu valor. Falha não publica participação parcial nem muda profundidade; tamanho
+incompatível é erro permanente, não conflito repetível. Definir sua sinalização
+na futura ABI, sem inferir estado de sucesso do void atual.
 
 ### Política de aninhamento: flat nesting
 
@@ -712,34 +821,36 @@ retirada antecipada exigirá especificação adicional, sem contrariar flat nest
 1. Em `gcc/c/c-parser.cc:newtm_c_parser_transaction` e
    `gcc/cp/parser.cc:newtm_cp_parser_transaction`, resolver e preservar as
    declarações dos nomes no ponto da diretiva, antes de analisar seu corpo.
-   Atualmente só há consulta para depuração e descarte. Definir as categorias
+   Atualmente a lista já é resolvida e preservada na árvore. Definir as categorias
    de entidades admitidas em coerência com a política de tipos; variáveis e
    parâmetros são candidatos, funções e typedefs não são objetos transacionáveis.
    Casos especiais como membros e structured bindings exigem tratamento explícito.
 2. Em `gcc/c-family/c-omp.cc:newtm_finish_transaction`, sua declaração em
-   `c-common.h`, `gcc/tree.def` e `gcc/tree.h`, acrescentar uma representação
-   persistente da lista e suas localizações. Não guardar strings para resolver
+   `c-common.h`, `gcc/tree.def` e `gcc/tree.h`, manter a representação
+   persistente da lista e melhorar suas localizações quando necessário. Não guardar strings para resolver
    nomes posteriormente e não usar ponteiros para tokens temporários.
 3. Em `gcc/cp/pt.cc`, separar o caso `OMP_TRANSACTION` quando necessário para
    substituir a lista em templates e validar os casos dependentes. Auditar
    módulos, walkers, cópia e dumps segundo o guia geral.
-4. Em `gcc/gimplify.cc`, no caso `OMP_TRANSACTION`, transportar os objetos
-   para GIMPLE. Atualizar `gcc/gimple.def`, `gimple.h`, `gimple.cc` e
+4. Em `gcc/gimplify.cc`, no caso `OMP_TRANSACTION`, planejar a identidade dos
+   objetos necessária à instrumentação de acessos. Hoje a lista vira chamadas
+   comuns durante a gimplificação. Avaliar `gcc/gimple.def`, `gimple.h`, `gimple.cc` e
    `newtm_build_transaction`: o layout atual `GSS_OMP` armazena apenas o corpo.
    Escolher layout que preserve os novos dados e atualizar consumidores.
 
 ### Lowering e chamadas geradas
 
-O ponto principal é `gcc/omp-low.cc:newtm_lower_transaction`. Hoje ele apenas
-faz `lower_omp` do corpo usando `ctx->outer` e substitui o marcador pelo corpo.
-A integração futura deverá gerar, conceitualmente:
+O ponto de lowering é `gcc/omp-low.cc:newtm_lower_transaction`: ele faz
+`lower_omp` do corpo usando `ctx->outer` e elimina o marcador. As chamadas de
+registro já são geradas na gimplificação. A integração funcional deve preservar
+essa ordem conceitual, revendo a ABI provisória conforme necessário:
 
 ```text
-context = GOMP_transaction_begin()
+GOMP_transaction_begin()
 para cada objeto listado:
-    GOMP_transaction_register(context, endereço efetivo, tamanho em bytes)
+    GOMP_transaction_register(endereço efetivo, tamanho em bytes)
 corpo transformado
-GOMP_transaction_end(context)
+GOMP_transaction_end()
 ```
 
 Essas três chamadas estabelecem somente registro e vida útil. Não constituem
@@ -763,9 +874,15 @@ Os builtins dos serviços devem ser declarados em `gcc/omp-builtins.def`, com
 assinaturas em `gcc/builtin-types.def` quando necessário. Não atribuir atributos
 `pure`, `const` ou outros que permitam eliminar/reordenar sincronização.
 
-A implementação da política acordada deve instrumentar leituras e escritas enquanto o
-marcador e sua lista ainda existem em `newtm_lower_transaction`, antes de
-`gsi_replace_with_seq`. Registro de endereços por si só não detecta conflitos.
+A implementação da política acordada deve instrumentar leituras e escritas
+antes da eliminação do marcador. Hoje a lista não está no marcador GIMPLE;
+preservar explicitamente os dados necessários ou instrumentar antes. Em
+`newtm_lower_transaction`, isso deve ocorrer antes de
+`gsi_replace_with_seq`. Seguir o agente de acesso para preparar as chamadas
+antes de `lower_omp(..., ctx->outer)` quando precisarem do remapeamento OpenMP,
+e preservar os dados necessários antes da varredura quando afetarem captura.
+Instrumentar cada acesso uma única vez, inclusive no aninhamento. Registro de
+endereços por si só não detecta conflitos.
 Aplicar os contratos de aliases e funções definidos acima; não afirmar cobertura
 completa apenas pela inspeção de atribuições diretas. Auditar operações que
 combinam leitura/escrita, builtins de cópia, acessos agregados e otimizações que
@@ -847,23 +964,22 @@ Escolher libgomp como local da biblioteca e remoção automática são propostas
 técnicas deste documento. Não apresentá-las como escolhas já aprovadas
 individualmente pelo usuário.
 
-## Estado do esqueleto da biblioteca hash
+## Estado atual da biblioteca hash
 
-Foram introduzidos `libgomp/newtm-hash.c` e `libgomp/newtm-hash.h`, com os tipos
-opacos públicos internos, as estruturas privadas de tabela/bucket/entrada e as
-nove primitivas especificadas. Os comentários descrevem argumentos, retornos,
-pré-condições e comportamento futuro. As funções ainda não implementam operações:
-todos os corpos chamam `gomp_fatal` com diagnóstico de funcionalidade não
-implementada, evitando retornos fictícios de sucesso e uso de estado inválido.
-Nenhuma chamada a essas primitivas foi adicionada ao compilador ou runtime.
+`libgomp/newtm-hash.c` e `.h` definem tipos opacos, estruturas privadas e nove
+primitivas internas. Os corpos apenas imprimem argumentos; funções de estado
+retornam INVALID, saídas ficam nulas e consultas retornam null/zero. Não há
+operações reais de tabela. A ponte GOMP_transaction_* chama create/acquire/
+release/destroy para rastreamento e ignora esses estados deliberadamente.
 
-`libgomp/Makefile.am` e seu `Makefile.in` incluem o fonte e o cabeçalho entre
-os fontes da biblioteca, com objeto e dependência correspondentes. O cabeçalho
-continua interno e os símbolos têm visibilidade oculta. Não foram criados nesta
-etapa estruturas ou serviços da camada transacional de política.
+Ao implementar a hash, atualizar a ponte na mesma entrega: verificar criação e
+aquisição antes de publicar estado inicializado ou registros; não aceitar
+handles nulos como sucesso; diagnosticar falhas permanentes sem retry infinito;
+verificar destruição e manter a ordem de retirada das referências. O contrato
+de erro não pode mudar apenas dentro das primitivas, deixando os chamadores
+com o comportamento dos stubs.
 
-Validação desta etapa: compilação de `newtm-hash.lo` e `make -j3 all` em
-`/usr/src/gcc-build/x86_64-pc-linux-gnu/libgomp`, concluídos com sucesso,
-incluindo compilação com `-Wall -Werror`. Logs:
-`/tmp/newtm-hash-skeleton-build.log` e `/tmp/newtm-hash-skeleton-make.log`.
-Isso comprova compilação e ligação do esqueleto, não funcionalidade da hash.
+O fonte e o cabeçalho estão incluídos em Makefile.am/Makefile.in. Os símbolos
+newtm_hash_* continuam internos; somente a ponte é exportada. Build e testes
+históricos estão registrados em OPENMP_TRANSACTION_IMPLEMENTATION.md e não
+constituem validação funcional da tabela.
