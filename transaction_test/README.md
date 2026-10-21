@@ -32,6 +32,7 @@ quando a hash e a STM forem implementadas. Os `puts` internos do exemplo
 aninhado servem apenas a esta etapa; nao representam E/S aprovada para uma
 transacao com repeticao. Testes negativos de sintaxe, escopo e categorias de
 identificadores continuam na suite DejaGNU do GCC (`transaction-*`).
+<<<<<<< HEAD
 
 ## Teste dos esqueletos de ciclo de vida
 
@@ -65,3 +66,5 @@ O verificador lifecycle exige asserções Python habilitadas e recusa -O/-OO ou
 PYTHONOPTIMIZE, evitando aprovar a validação de logs/símbolos sem executá-la.
 Resultados da verificação geral e comandos DejaGNU com a libgomp local estão em
 [OPENMP_TRANSACTION_AUDIT.md](../OPENMP_TRANSACTION_AUDIT.md).
+=======
+>>>>>>> 775307665b55aaf0c7f28e25bcb02f20d9019458
